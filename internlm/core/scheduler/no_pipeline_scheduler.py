@@ -11,7 +11,12 @@ import torch.distributed as dist
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 from internlm.core.engine import Engine
-from internlm.utils.common import SchedulerHook, conditional_context
+from internlm.utils.common import (
+    SchedulerHook,
+    check_data_is_packed,
+    conditional_context,
+    get_current_device,
+)
 from internlm.utils.logger import get_logger
 from internlm.utils.timeout import llm_timeout
 
@@ -74,8 +79,10 @@ class NonPipelineScheduler(BaseScheduler):
             label (Any): The label to be loaded.
         """
 
-        _data, _label = self._load_micro_batch(data=data, label=label, offset=self._grad_accum_offset, bsz_stride=1)
-        self._grad_accum_offset += 1
+        _data, _label = self._load_micro_batch(
+            data=data, label=label, offset=self._grad_accum_offset, bsz_stride=self._bsz_stride
+        )
+        self._grad_accum_offset += self._bsz_stride
 
         if self.data_process_func:
             _data["input_ids"] = self.data_process_func(_data["input_ids"], _data["cu_seqlens"])
@@ -127,7 +134,7 @@ class NonPipelineScheduler(BaseScheduler):
                 moe_loss = (
                     sum(moe_losses) * gpc.config.loss.moe_loss_coeff
                     if hasattr(gpc.config.model, "num_experts") and gpc.config.model.num_experts > 1
-                    else torch.tensor(0.0, device=torch.cuda.current_device(), dtype=gpc.config.model.get("dtype"))
+                    else torch.tensor(0.0, device=get_current_device(), dtype=gpc.config.model.get("dtype"))
                 )
                 # the moe_loss is computed among the "tensor" group if sequence parallel is enabled,
                 # so we need to do allreduce
@@ -179,9 +186,17 @@ class NonPipelineScheduler(BaseScheduler):
             forward_only or return_loss
         ), "The argument 'return_loss' has to be True when 'forward_only' is False, but got False."
 
-        batch_data, actual_batch_size = engine.load_batch(data_iter)  # actual_batch_size is micro_num
+        # actual_batch_size is micro_num when training,
+        # actual_batch_size is micro_num * micro_bsz when evaluating
+        batch_data, actual_batch_size = engine.load_batch(data_iter)
 
-        self._grad_accum_size = actual_batch_size  # Rampup or variable bsz size.
+        if check_data_is_packed(batch_data):
+            micro_num = actual_batch_size
+        else:
+            micro_num = actual_batch_size // gpc.config.data["micro_bsz"]
+
+        self._grad_accum_size = micro_num  # Rampup or variable bsz size.
+        self._bsz_stride = actual_batch_size // self._grad_accum_size
 
         data, label = batch_data
 

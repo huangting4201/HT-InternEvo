@@ -6,6 +6,7 @@ import pytest
 import torch
 
 import internlm
+from internlm.accelerator import get_accelerator
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 from internlm.data import build_train_loader_with_data_type
@@ -17,6 +18,7 @@ from internlm.train import (
     initialize_model,
     initialize_optimizer,
 )
+from internlm.utils.common import get_current_device
 from internlm.utils.logger import get_logger
 from tests.common_fixture import (
     build_environment,
@@ -28,6 +30,7 @@ from tests.common_fixture import (
 
 logger = get_logger(__file__)
 config = config_7B
+internlm_accelerator = get_accelerator()
 
 
 def compute_rotol(tensor1, tensor2):
@@ -81,7 +84,7 @@ def train_check_norm_weight(args):
     train_dl, dataset_types = build_train_loader_with_data_type()
 
     metric = AccPerplex(
-        device=torch.cuda.current_device(),
+        device=get_current_device(),
         tp_pg=gpc.get_group(ParallelMode.TENSOR),
         dp_pg=gpc.get_group(ParallelMode.DATA),
         dataset_types=dataset_types,
@@ -104,7 +107,7 @@ def train_check_norm_weight(args):
 
     for batch_count in range(total_steps):
         if batch_count % 100 == 0:
-            torch.cuda.empty_cache()
+            internlm_accelerator.empty_cache()
             gc.collect()
 
         # load batch data
@@ -130,7 +133,7 @@ def train_check_norm_weight(args):
 
         trainer.step()
 
-        torch.cuda.reset_peak_memory_stats()
+        internlm_accelerator.reset_peak_memory_stats()
 
     blocks_norm1_list = []
     blocks_norm2_list = []

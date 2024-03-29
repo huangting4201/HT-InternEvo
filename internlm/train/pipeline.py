@@ -15,6 +15,7 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import (
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.utils.data import DataLoader
 
+from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.core.communication.isp import (
     ISPCommModelConfig,
     ISPCommunicator,
@@ -74,8 +75,14 @@ from internlm.utils.parallel import (
 from internlm.utils.registry import MODEL_INITIALIZER
 from internlm.utils.timeout import llm_timeout
 
+try:
+    import torch_npu
+except (ImportError, ModuleNotFoundError):
+    pass
+
 RMSNorm = try_import_RMSNorm()
 logger = get_logger(__file__)
+internlm_accelerator = get_accelerator()
 
 
 def set_fp32_attr_for_model(model: Union[nn.Module, nn.ModuleList]):
@@ -291,10 +298,15 @@ def initialize_optimizer(model: Union[nn.Module, nn.ModuleList], isp_communicato
     params = create_param_groups(model, adam_cfg.weight_decay)
     adam_extra_kwargs = {}
     # set fused=True to avoid nan grad norm when model size is larger and use_fp32_norm=True
-    if torch.__version__ >= "2.1.0":
-        adam_extra_kwargs["fused"] = True
 
-    naive_optimizer = torch.optim.AdamW(
+    if internlm_accelerator.get_accelerator_backend() == AcceleratorType.NPU:
+        internlm_adamw = torch_npu.optim.NpuFusedAdamW
+    else:
+        internlm_adamw = torch.optim.AdamW
+        if torch.__version__ >= "2.1.0":
+            adam_extra_kwargs["fused"] = True
+
+    naive_optimizer = internlm_adamw(
         params=params,
         lr=adam_cfg.lr,
         betas=(adam_cfg.adam_beta1, adam_cfg.adam_beta2),
@@ -395,8 +407,8 @@ def load_new_batch(train_dl: DataLoader, train_iter: Iterable, train_state: Trai
     timer("batch-gen").stop()
 
     if batch[0].get("type_ids", None) is not None:
-        # if use_flash_attn is False, we need to unpack type_ids
-        if not gpc.config.model.use_flash_attn:
+        # if use_packed_dataset is False, we need to unpack type_ids
+        if not gpc.config.data.use_packed_dataset:
             batch[0]["type_ids"] = unpack_data(batch[0]["type_ids"], batch[0]["cu_seqlens"], is_type_ids=True)
 
     return batch, train_iter
@@ -406,24 +418,45 @@ def initialize_llm_profile(profiling: bool = False, start_time: str = None):
     """Initialize and return the profiler context manager instance."""
 
     if profiling and gpc.get_local_rank(ParallelMode.DATA) == 0 and gpc.get_local_rank(ParallelMode.TENSOR) == 0:
-        llm_profile = torch.profiler.profile
-        logger.info(f"Do profiling in rank {gpc.get_global_rank()}!")
-    else:
-        llm_profile = DummyProfile
-
-    return llm_profile(
-        activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(skip_first=5, wait=1, warmup=1, active=1, repeat=1),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler(
+        schedule_config = {"wait": 1, "warmup": 1, "active": 1, "repeat": 1, "skip_first": 3}
+        trace_path = (
             f"RUN/{gpc.config.JOB_NAME}/{start_time}/traces/rank{gpc.get_global_rank()}_"
-            + f"dp{gpc.get_local_rank(ParallelMode.DATA)}_"
-            + f"wp{gpc.get_local_rank(ParallelMode.WEIGHT)}_"
-            + f"tp{gpc.get_local_rank(ParallelMode.TENSOR)}",
-        ),
-        with_stack=True,
-        with_modules=True,
-        profile_memory=True,
-    )
+            f"dp{gpc.get_local_rank(ParallelMode.DATA)}_"
+            f"wp{gpc.get_local_rank(ParallelMode.WEIGHT)}_"
+            f"tp{gpc.get_local_rank(ParallelMode.TENSOR)}"
+        )
+        if internlm_accelerator.get_accelerator_backend() == AcceleratorType.NPU:
+            experimental_config = torch_npu.profiler._ExperimentalConfig(
+                aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,
+                profiler_level=torch_npu.profiler.ProfilerLevel.Level1,
+                l2_cache=False,
+            )
+            llm_profile = torch_npu.profiler.profile(
+                activities=[torch_npu.profiler.ProfilerActivity.CPU, torch_npu.profiler.ProfilerActivity.NPU],
+                schedule=torch_npu.profiler.schedule(**schedule_config),
+                on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(trace_path),
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=False,
+                with_flops=False,
+                with_modules=False,
+                experimental_config=experimental_config,
+            )
+            logger.info(f"Do profiling for NPU on rank {gpc.get_global_rank()}!")
+        else:
+            llm_profile = torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                schedule=torch.profiler.schedule(**schedule_config),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler(trace_path),
+                with_stack=True,
+                with_modules=True,
+                profile_memory=True,
+            )
+            logger.info(f"Do profiling for GPU on rank {gpc.get_global_rank()}!")
+    else:
+        llm_profile = DummyProfile()
+
+    return llm_profile
 
 
 @llm_timeout(func_name="record_current_batch_training_metrics")

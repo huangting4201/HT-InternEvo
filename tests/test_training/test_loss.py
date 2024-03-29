@@ -2,7 +2,6 @@ import math
 import os
 
 import pytest
-import torch
 import torch.distributed as dist
 
 import internlm
@@ -21,7 +20,7 @@ from internlm.train import (
     initialize_optimizer,
     load_new_batch,
 )
-from internlm.utils.common import BatchSkipper, launch_time
+from internlm.utils.common import BatchSkipper, get_current_device, launch_time
 from internlm.utils.gputest import empty_cache_and_diag
 from internlm.utils.megatron_timers import megatron_timer as timer
 
@@ -31,17 +30,18 @@ LOSS_SPIKE_LIMIT = 1.5
 LOSS_DEVIATION_LIMIT = 0.2
 # dp_size = 4
 BASELINE_LOSS_LIST = [
-    11.680583953857422,
-    7.83256721496582,
-    6.745327949523926,
-    6.187380790710449,
-    5.421087265014648,
-    5.3960981369018555,
-    5.090664863586426,
-    4.77808952331543,
-    4.6484055519104,
-    4.634660720825195,
+    11.63298511505127,
+    7.826552391052246,
+    6.727715969085693,
+    6.182102680206299,
+    5.395875930786133,
+    5.394404411315918,
+    5.053983688354492,
+    4.741974353790283,
+    4.629222869873047,
+    4.6164231300354,
 ]
+
 cur_loss_list = []
 
 
@@ -147,7 +147,7 @@ def train(
 
     # initialize metric for calculating accuracy and perplexity
     metric = AccPerplex(
-        device=torch.cuda.current_device(),
+        device=get_current_device(),
         tp_pg=gpc.get_group(ParallelMode.TENSOR),
         dp_pg=gpc.get_group(ParallelMode.DATA),
         dataset_types=dataset_types,
@@ -400,4 +400,3 @@ def test_training_internlm2():
     CONFIG_FILE_PATH = "./configs/7B_internlm2.py"
 
     train(dp_size=8, model_type="INTERNLM2_PUBLIC")
-

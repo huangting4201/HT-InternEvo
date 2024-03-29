@@ -6,7 +6,7 @@
 from contextlib import contextmanager
 from typing import Callable, List, Optional, Tuple, Union
 
-import torch.cuda
+import torch
 import torch.distributed as dist
 
 import internlm.core.communication as comm
@@ -36,25 +36,35 @@ def get_tensor_shape():
         return None
 
     if hasattr(gpc.config, "SEQ_LEN") and hasattr(gpc.config.data, "micro_bsz") and hasattr(gpc.config, "HIDDEN_SIZE"):
-        if gpc.config.model.use_flash_attn:
+        if gpc.config.data.use_packed_dataset and gpc.is_evaluating is False:
             if gpc.config.parallel.sequence_parallel:
                 sequence_world_size = gpc.get_world_size(ParallelMode.TENSOR)
                 tensor_shape = (
+                    1,
                     gpc.config.data["seq_len"] * gpc.config.data["micro_bsz"] // sequence_world_size,
                     gpc.config.model["hidden_size"],
                 )
             else:
                 tensor_shape = (
+                    1,
                     gpc.config.data["seq_len"] * gpc.config.data["micro_bsz"],
                     gpc.config.model["hidden_size"],
                 )
         else:
-            tensor_shape = (
-                gpc.config.data["micro_bsz"],
-                gpc.config.data["seq_len"],
-                gpc.config.model["hidden_size"],
-            )
-        return tensor_shape
+            if gpc.config.parallel.sequence_parallel:
+                sequence_world_size = gpc.get_world_size(ParallelMode.TENSOR)
+                tensor_shape = (
+                    gpc.config.data["micro_bsz"],
+                    gpc.config.data["seq_len"] // sequence_world_size,
+                    gpc.config.model["hidden_size"],
+                )
+            else:
+                tensor_shape = (
+                    gpc.config.data["micro_bsz"],
+                    gpc.config.data["seq_len"],
+                    gpc.config.model["hidden_size"],
+                )
+        return torch.Size(tensor_shape)
     else:
         return None
 
@@ -306,7 +316,7 @@ class PipelineScheduler(BaseScheduler):
         moe_loss = (
             sum(moe_losses) * gpc.config.loss.moe_loss_coeff
             if hasattr(gpc.config.model, "num_experts") and gpc.config.model.num_experts > 1
-            else torch.tensor(0.0, device=torch.cuda.current_device(), dtype=gpc.config.model.get("dtype"))
+            else torch.tensor(0.0, device=get_current_device(), dtype=gpc.config.model.get("dtype"))
         )
         # the moe_loss is computed among the "tensor" group if sequence parallel is enabled, so we need to do allreduce
         if gpc.config.parallel.sequence_parallel:
@@ -732,7 +742,7 @@ class InterleavedPipelineScheduler(PipelineScheduler):
         """
         assert (
             num_microbatches % gpc.get_world_size(ParallelMode.PIPELINE) == 0
-        ), "num_microbatches must be an integer multiple of pipeline parallel world size"
+        ), f"num_microbatches: {num_microbatches} must be an integer multiple of pipeline parallel world size"
 
         assert (
             isinstance(num_chunks, int) and num_chunks > 0
@@ -869,7 +879,7 @@ class InterleavedPipelineScheduler(PipelineScheduler):
         moe_loss = (
             sum(moe_losses) * gpc.config.loss.moe_loss_coeff
             if hasattr(gpc.config.model, "num_experts") and gpc.config.model.num_experts > 1
-            else torch.tensor(0.0, device=torch.cuda.current_device(), dtype=gpc.config.model.get("dtype"))
+            else torch.tensor(0.0, device=get_current_device(), dtype=gpc.config.model.get("dtype"))
         )
         # the moe_loss is computed among the "tensor" group if sequence parallel is enabled, so we need to do allreduce
         if gpc.config.parallel.sequence_parallel:

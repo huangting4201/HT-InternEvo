@@ -10,6 +10,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 
 import internlm
+from internlm.accelerator import get_accelerator
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 from internlm.core.context.parallel_context import Config
@@ -17,14 +18,16 @@ from internlm.data import (
     build_train_loader_with_data_type,
     build_valid_loader_with_data_type,
 )
-from internlm.eval.evaluation import switch_evaluation_no_pipeline_scheduler
+from internlm.eval.evaluation import switch_evaluation_mode
 from internlm.initialize.launch import args_sanity_check
 from internlm.model.losses import FlashGPTLMLoss
 from internlm.model.metrics import AccPerplex, SchedulerMetricHook
 from internlm.train import initialize_model, initialize_optimizer
+from internlm.utils.common import get_current_device
 from internlm.utils.logger import get_logger
 
 logger = get_logger(__file__)
+internlm_accelerator = get_accelerator()
 
 TOTAL_STEPS = 300
 config = Config(
@@ -127,7 +130,7 @@ def build_environment(rank, world_size, config):
     os.environ["WORLD_SIZE"] = str(world_size)
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = "33333"
-    torch.cuda.empty_cache()
+    internlm_accelerator.empty_cache()
     # launcher="torch"
     internlm.launch_from_torch(config=config, seed=1024)
     args_sanity_check()
@@ -137,9 +140,9 @@ def seed_all(seed, cuda_deterministic=False):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+    if internlm_accelerator.is_available():
+        internlm_accelerator.manual_seed(seed)
+        internlm_accelerator.manual_seed_all(seed)
     if cuda_deterministic:  # slower, more reproducible
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
@@ -152,7 +155,7 @@ def evaluate_on_val_dls(
     trainer,
     val_dls,
 ):
-    torch.cuda.empty_cache()
+    internlm_accelerator.empty_cache()
     trainer.eval()
     verbose = gpc.is_rank_for_log()
     data_cfg = gpc.config.data
@@ -162,7 +165,7 @@ def evaluate_on_val_dls(
             continue
 
         val_metric = AccPerplex(
-            device=torch.cuda.current_device(),
+            device=get_current_device(),
             tp_pg=gpc.get_group(ParallelMode.TENSOR),
             dp_pg=gpc.get_group(ParallelMode.DATA),
         )
@@ -181,12 +184,7 @@ def evaluate_on_val_dls(
             with torch.inference_mode():
                 total_val_bsz = len(batch[1])
                 assert total_val_bsz % data_cfg.micro_bsz == 0
-                grad_accum_size = total_val_bsz // data_cfg.micro_bsz
-                with switch_evaluation_no_pipeline_scheduler(
-                    trainer=trainer,
-                    grad_accum_size=grad_accum_size,
-                    metric_hook_list=[val_sche_metric_hook],
-                ):
+                with switch_evaluation_mode(trainer=trainer, metric_hook_list=[val_sche_metric_hook]):
                     _, _, loss = trainer.execute_schedule(
                         batch, forward_only=True, return_loss=True, return_output_label=False
                     )
@@ -201,7 +199,7 @@ def evaluate_on_val_dls(
             val_loss = val_loss / (val_idx + 1 + 1e-6)
 
     trainer.train()
-    torch.cuda.empty_cache()
+    internlm_accelerator.empty_cache()
     dist.barrier()
     return val_loss
 
@@ -280,7 +278,7 @@ def exam_loss(args):
 
     # initialize metric for calculating accuracy and perplexity
     metric = AccPerplex(
-        device=torch.cuda.current_device(),
+        device=get_current_device(),
         tp_pg=gpc.get_group(ParallelMode.TENSOR),
         dp_pg=gpc.get_group(ParallelMode.DATA),
         dataset_types=dataset_types,
@@ -369,7 +367,7 @@ def exam_loss(args):
             if val_result != 0:
                 val_list.append(val_result)
 
-    torch.cuda.empty_cache()
+    internlm_accelerator.empty_cache()
     dist.barrier()
 
     if gpc.is_rank_for_log():

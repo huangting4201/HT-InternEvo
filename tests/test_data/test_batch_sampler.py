@@ -13,7 +13,7 @@ from internlm.core.trainer import TrainState
 from internlm.data import build_train_loader_with_data_type, build_valid_loader_with_data_type
 from internlm.train import load_new_batch
 from internlm.eval.evaluation import (
-    switch_evaluation_no_pipeline_scheduler,
+    switch_evaluation_mode,
     switch_evaluation_pipeline_scheduler,
 )
 
@@ -81,9 +81,9 @@ def do_warmup(args):
 
         tokens_num = np.prod(input_ids_shape)
 
-        # If not use fa, 'type_ids' is unpcaked when load_new_batch is calling.
-        # However, 'input_ids' is unpcaked in pp/nopp engine.
-        if not init_config.model.use_flash_attn:
+        # If not use packed data, 'type_ids' is unpacked when load_new_batch is calling.
+        # However, 'input_ids' is unpacked in pp/nopp engine.
+        if not init_config.data.use_packed_dataset:
             assert type_ids_shape == torch.Size(
                 [answer[i], micro_bsz, sql]
             ), f"iter:{i}, type_ids_shape: {type_ids_shape} != {torch.Size([answer[i], micro_bsz, sql])}"
@@ -104,6 +104,7 @@ def do_warmup(args):
                 f"micro_bsz:{micro_bsz}",
                 f"input shape: {batch[0]['type_ids'].shape}",
                 f"rampup_batch_size: {gpc.config.data.rampup_batch_size}",
+                f"use_packed_dataset:{gpc.config.data.use_packed_dataset}",
                 f"tokens_num: {tokens_num}",
                 flush=True,
             )
@@ -118,33 +119,21 @@ def do_warmup(args):
         ), f"{tokens_num} == {answer[i] * gpc.config.data.seq_len * micro_bsz}"
 
     # test no-packed datasets.
-    for _, val_dl in val_dls.items():
-        for _, batch in enumerate(val_dl):
-            if gpc.is_using_parallel_mode(ParallelMode.PIPELINE):
-                total_val_bsz = len(batch[1])
-                batch[0]["input_ids"] = batch[0]["input_ids"].to(torch.bfloat16)
-                assert total_val_bsz % micro_bsz == 0
-                num_microbatches = total_val_bsz // micro_bsz
-                tensor_shape = torch.Size([micro_bsz, batch[0]["input_ids"].shape[1]])  # toy model hidden size is 8.
-                with switch_evaluation_pipeline_scheduler(
-                    trainer=trainer,
-                    num_microbatches=num_microbatches,
-                    tensor_shape=tensor_shape,
-                    metric_hook_list=[],
-                ):
-                    scheduler.forward_backward_step(
-                        engine, batch, forward_only=True, return_loss=False, return_output_label=False
-                    )
-            else:
-                total_val_bsz = len(batch[1])
-                batch[0]["input_ids"] = batch[0]["input_ids"].to(torch.bfloat16)
-                assert total_val_bsz % micro_bsz == 0
-                grad_accum_size = total_val_bsz // micro_bsz
-                with switch_evaluation_no_pipeline_scheduler(
-                    trainer=trainer,
-                    grad_accum_size=grad_accum_size,
-                    metric_hook_list=[],
-                ):
+    with switch_evaluation_mode(trainer=trainer, metric_hook_list=[]):
+        for _, val_dl in val_dls.items():
+            for _, batch in enumerate(val_dl):
+                if gpc.is_using_parallel_mode(ParallelMode.PIPELINE):
+                    total_val_bsz = len(batch[1])
+                    batch[0]["input_ids"] = batch[0]["input_ids"].to(torch.bfloat16)
+                    assert total_val_bsz % micro_bsz == 0
+                    with switch_evaluation_pipeline_scheduler(trainer=trainer):
+                        scheduler.forward_backward_step(
+                            engine, batch, forward_only=True, return_loss=False, return_output_label=False
+                        )
+                else:
+                    total_val_bsz = len(batch[1])
+                    batch[0]["input_ids"] = batch[0]["input_ids"].to(torch.bfloat16)
+                    assert total_val_bsz % micro_bsz == 0
                     scheduler.forward_backward_step(
                         engine, batch, forward_only=True, return_loss=False, return_output_label=False
                     )
@@ -174,6 +163,8 @@ def test_warmup(use_flash_atten_case, group_case, micro_bsz_case):
                 min_length=0,
                 total_steps=8,
                 num_worker=0,
+                use_packed_dataset=True,
+                fixed_random_dataset_seqlen=False,
             ),
             model=dict(
                 dtype=torch.bfloat16,
@@ -187,6 +178,7 @@ def test_warmup(use_flash_atten_case, group_case, micro_bsz_case):
     config.data.seq_len = group_case[5]
     config.parallel.pipeline.size = group_case[4]
     config.model.use_flash_attn = use_flash_atten_case
+    config.data.use_packed_dataset = use_flash_atten_case
     config.data.micro_bsz = micro_bsz_case
     config.data.micro_num = group_case[0]
     config.data.gradient_accumulation = config.data.micro_num

@@ -8,6 +8,7 @@ import pytest
 import torch
 
 import internlm
+from internlm.accelerator import get_accelerator
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 from internlm.core.context.parallel_context import Config
@@ -16,9 +17,11 @@ from internlm.initialize.launch import args_sanity_check
 from internlm.model.losses import FlashGPTLMLoss
 from internlm.model.metrics import AccPerplex, SchedulerMetricHook
 from internlm.train import initialize_model, initialize_optimizer
+from internlm.utils.common import get_current_device
 from internlm.utils.logger import get_logger
 
 logger = get_logger(__file__)
+internlm_accelerator = get_accelerator()
 
 TOTAL_STEPS = 1
 config = Config(
@@ -41,6 +44,7 @@ config = Config(
             valid_every=300,
             rampup_batch_size=None,
             diag_outlier_ratio=1.1,
+            use_packed_dataset=False,
         ),
         model=dict(
             checkpoint=True,
@@ -48,7 +52,7 @@ config = Config(
             embed_split_hidden=True,
             vocab_size=103168,
             embed_grad_scale=1,
-            parallel_output=True,
+            parallel_output=False,
             hidden_size=4096,
             num_layers=32,
             mlp_ratio=8 / 3,
@@ -122,7 +126,7 @@ def build_environment(rank, world_size, free_port, config):
     os.environ["WORLD_SIZE"] = str(world_size)
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(free_port)
-    torch.cuda.empty_cache()
+    internlm_accelerator.empty_cache()
     # launcher="torch"
     internlm.launch_from_torch(config=config, seed=1024)
     args_sanity_check()
@@ -132,9 +136,9 @@ def seed_all(seed, cuda_deterministic=False):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+    if internlm_accelerator.is_available():
+        internlm_accelerator.manual_seed(seed)
+        internlm_accelerator.manual_seed_all(seed)
     if cuda_deterministic:  # slower, more reproducible
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
@@ -164,14 +168,14 @@ def train_check_output(args):
     model = initialize_model()
 
     # initialize loss function
-    criterion = FlashGPTLMLoss(parallel_output=True, label_smoothing=gpc.config.loss.label_smoothing)
+    criterion = FlashGPTLMLoss(parallel_output=False, label_smoothing=gpc.config.loss.label_smoothing)
 
     optimizer, beta2_scheduler, lr_scheduler = initialize_optimizer(model=model)
 
     train_dl, dataset_types = build_train_loader_with_data_type()
 
     metric = AccPerplex(
-        device=torch.cuda.current_device(),
+        device=get_current_device(),
         tp_pg=gpc.get_group(ParallelMode.TENSOR),
         dp_pg=gpc.get_group(ParallelMode.DATA),
         dataset_types=dataset_types,
@@ -232,7 +236,7 @@ def train_check_output(args):
             logger.info(
                 f"The relative error is {rtol}. Between {tensor1[index_max_diff]} and {tensor2[index_max_diff]}"
             )
-            assert rtol < 1e-5, f"The relative error is {rtol}"
+            assert False, f"The relative error is {rtol}"
 
 
 def test_output():
