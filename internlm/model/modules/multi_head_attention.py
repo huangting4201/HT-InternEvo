@@ -55,6 +55,7 @@ def get_gqa_attn_cls(use_flash_attn, tp_mode, causal, softmax_scale, dropout, se
 
     if tp_mode == "isp":
         inner_attn = DistributedAttention(inner_attn, sequence_process_group=sequence_process_group)
+        inner_cross_attn = DistributedAttention(inner_cross_attn, sequence_process_group=sequence_process_group)
 
     return inner_attn, inner_cross_attn
 
