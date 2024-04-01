@@ -431,8 +431,6 @@ class MHA(nn.Module):
             elif internlm_accelerator.get_accelerator_backend() == AcceleratorType.NPU:
                 q = unpack_qkv_before_attn(q, cu_seqlens)
                 kv = unpack_qkv_before_attn(kv, cu_seqlens)
-                kwargs.pop("cu_seqlens")
-                kwargs.pop("max_seqlen")
 
             if self.dtype is torch.float32:
                 if q.dtype not in [torch.float16, torch.bfloat16]:
