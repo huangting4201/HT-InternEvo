@@ -687,16 +687,19 @@ def Silu(w1_o, w2_o):
 Silu = torch.jit.script(Silu)
 
 
-def unpack_before_attn(cur_input=None, cu_seqlens=None, padding_v: int = 0):
+def unpack_qkv_before_attn(cur_input=None, cu_seqlens=None, padding_v: int = 0):
     """
-    cur_input: the shape is (1, packed_length, three, head_num, head_dim)
+    qkv: the shape is (1, packed_length, three, head_num, head_dim)
+    kv: the shape is (1, packed_length, two, head_num, head_dim)
+    q/k/v: the shape is (1, packed_length, head_num, head_dim)
 
     Return:
-    output: the shape is (micro_bsz, seq_len, three, head_num, head_dim)
+    output: the shape is (micro_bsz, seq_len, three, head_num, head_dim) for qkv
+                        (micro_bsz, seq_len, two, head_num, head_dim) for kv
+                        (micro_bsz, seq_len, head_num, head_dim) for q/k/v
     """
+    assert cu_seqlens is not None
     assert cur_input.shape[0] == 1
-    if gpc.get_global_rank() == 0:
-        print(f"ht debug qkv.shape:{cur_input.shape}", flush=True)
 
     micro_bsz = len(cu_seqlens) - 1
     seq_len_ = gpc.config.data.seq_len
@@ -710,21 +713,17 @@ def unpack_before_attn(cur_input=None, cu_seqlens=None, padding_v: int = 0):
         length = cu_seqlens[i + 1] - cu_seqlens[i]
         output[i, 0:length] = cur_input[0, cu_seqlens[i] : cu_seqlens[i + 1]]
 
-    if gpc.get_global_rank() == 0:
-        print(f"ht debug output.shape:{output.shape}", flush=True)
-
     return output
 
 
-def pack_after_attn(cur_input=None, cu_seqlens=None, padding_v: int = 0):
+def pack_output_after_attn(cur_input=None, cu_seqlens=None, padding_v: int = 0):
     """
-    cur_input: the shape is (micro_bsz, seq_len, three, head_num, head_dim)
+    cur_input: the shape is (micro_bsz, seq_len, hidden_size)
 
     Return:
-    output: the shape is (1, packed_length, three, head_num, head_dim)
+    output: the shape is (1, packed_length, hidden_size)
     """
-    if gpc.get_global_rank() == 0:
-        print(f"ht debug pack qkv.shape:{cur_input.shape}", flush=True)
+    assert cu_seqlens is not None
 
     micro_bsz = len(cu_seqlens) - 1
     seq_len_ = gpc.config.data.seq_len
@@ -738,8 +737,5 @@ def pack_after_attn(cur_input=None, cu_seqlens=None, padding_v: int = 0):
     for i in range(micro_bsz):
         length = cu_seqlens[i + 1] - cu_seqlens[i]
         output[0, cu_seqlens[i] : cu_seqlens[i + 1]] = cur_input[i, 0:length]
-
-    if gpc.get_global_rank() == 0:
-        print(f"ht debug pack output.shape:{output.shape}", flush=True)
 
     return output
