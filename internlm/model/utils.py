@@ -685,3 +685,61 @@ def Silu(w1_o, w2_o):
 
 
 Silu = torch.jit.script(Silu)
+
+
+def unpack_before_attn(cur_input=None, cu_seqlens=None, padding_v: int = 0):
+    """
+    cur_input: the shape is (1, packed_length, three, head_num, head_dim)
+
+    Return:
+    output: the shape is (micro_bsz, seq_len, three, head_num, head_dim)
+    """
+    assert cur_input.shape[0] == 1
+    if gpc.get_global_rank() == 0:
+        print(f"ht debug qkv.shape:{cur_input.shape}", flush=True)
+
+    micro_bsz = len(cu_seqlens) - 1
+    seq_len_ = gpc.config.data.seq_len
+    dtype_ = cur_input.dtype
+    output_shape = list(cur_input.shape)
+    output_shape[0] = micro_bsz
+    output_shape[1] = seq_len_
+
+    output = torch.empty(output_shape, device=cur_input.device, dtype=dtype_).fill_(padding_v)
+    for i in range(micro_bsz):
+        length = cu_seqlens[i + 1] - cu_seqlens[i]
+        output[i, 0:length] = cur_input[0, cu_seqlens[i] : cu_seqlens[i + 1]]
+
+    if gpc.get_global_rank() == 0:
+        print(f"ht debug output.shape:{output.shape}", flush=True)
+
+    return output
+
+
+def pack_after_attn(cur_input=None, cu_seqlens=None, padding_v: int = 0):
+    """
+    cur_input: the shape is (micro_bsz, seq_len, three, head_num, head_dim)
+
+    Return:
+    output: the shape is (1, packed_length, three, head_num, head_dim)
+    """
+    if gpc.get_global_rank() == 0:
+        print(f"ht debug pack qkv.shape:{cur_input.shape}", flush=True)
+
+    micro_bsz = len(cu_seqlens) - 1
+    seq_len_ = gpc.config.data.seq_len
+    packed_len_ = gpc.config.data.micro_bsz * seq_len_
+    dtype_ = cur_input.dtype
+    output_shape = list(cur_input.shape)
+    output_shape[0] = 1
+    output_shape[1] = packed_len_
+
+    output = torch.empty(output_shape, device=cur_input.device, dtype=dtype_).fill_(padding_v)
+    for i in range(micro_bsz):
+        length = cu_seqlens[i + 1] - cu_seqlens[i]
+        output[0, cu_seqlens[i] : cu_seqlens[i + 1]] = cur_input[i, 0:length]
+
+    if gpc.get_global_rank() == 0:
+        print(f"ht debug pack output.shape:{output.shape}", flush=True)
+
+    return output

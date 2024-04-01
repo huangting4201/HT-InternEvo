@@ -19,6 +19,7 @@ from internlm.model.modules.embedding import (
     RotaryEmbedding,
 )
 from internlm.model.ops.linear import get_linear_cls
+from internlm.model.utils import unpack_before_attn, pack_after_attn
 from internlm.utils.common import get_current_device
 
 internlm_accelerator = get_accelerator()
@@ -824,6 +825,10 @@ class MHA(nn.Module):
         # for packed data, batch dimension with a size of 1 should be directly squeezed off.
         if internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
             qkv = qkv.squeeze(0)
+        # since torch_npu only supports fa with no packed data currently, qkv should be unpacked
+        elif internlm_accelerator.get_accelerator_backend() == AcceleratorType.NPU:
+            qkv = unpack_before_attn(qkv)
+
         if inference_params is None:
             if gpc.config.model.dtype is torch.float32 and gpc.config.model.use_flash_attn:
                 with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
@@ -836,10 +841,12 @@ class MHA(nn.Module):
         else:
             raise RuntimeError("Not support this right now")
 
-        context = rearrange(context, "b h d -> b (h d)")  # recover the shape
-        # restore bsz dimension
         if internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
-            context = context.unsqueeze(0)
+            context = rearrange(context, "s h d -> s (h d)")  # recover the shape
+            context = context.unsqueeze(0)  # restore bsz dimension
+        elif internlm_accelerator.get_accelerator_backend() == AcceleratorType.NPU:
+            context = rearrange(context, "b s h d -> b s (h d)")  # recover the shape
+            context = pack_after_attn(context)
 
         out = self.out_proj(context)
 

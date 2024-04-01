@@ -326,14 +326,11 @@ def args_sanity_check():
     if gpc.config.model.use_flash_attn and internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
         gpc.config["use_cuda_flash_attn"] = True
 
-    # for NPU accelerator supports: 1）FA-True + Packed-False 2) FA-False + Packed-False
+    # for NPU accelerator supports: 1）FA-True + Packed-True 2) FA-False + Packed-False
     # for GPU accelerator supports: 1）FA-True + Packed-True 2) FA-False + Packed-False
-    if internlm_accelerator.get_accelerator_backend() == AcceleratorType.NPU:
-        assert gpc.config.data.use_packed_dataset is False, "packed data is not supported for NPU accelerator"
-    else:
-        assert (
-            gpc.config.use_cuda_flash_attn == gpc.config.data.use_packed_dataset
-        ), "use_packed_dataset should be set same value as use_flash_attn when accelerator type is GPU"
+    assert (
+        gpc.config.model.use_flash_attn == gpc.config.data.use_packed_dataset
+    ), "use_packed_dataset should be set same value as use_flash_attn"
 
     old_parallel_output = gpc.config.model.get("parallel_output", None)
     # Try to change user setting
