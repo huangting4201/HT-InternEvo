@@ -297,16 +297,16 @@ class DistributedAttention(torch.nn.Module):
 
         if qkv is not None:
             qkv = _SeqAllToAll.apply(self.spg, qkv, scatter_gather["qkv"][0], scatter_gather["qkv"][1])
-            context_layer = self.local_attn(qkv, **kwargs)
+            context_layer = self.local_attn(qkv=qkv, **kwargs)
         elif kv is not None:
             q = _SeqAllToAll.apply(self.spg, q, scatter_gather["q"][0], scatter_gather["q"][1])
             kv = _SeqAllToAll.apply(self.spg, kv, scatter_gather["kv"][0], scatter_gather["kv"][1])
-            context_layer = self.local_attn(q, kv, **kwargs)
+            context_layer = self.local_attn(q=q, kv=kv, **kwargs)
         else:
             q = _SeqAllToAll.apply(self.spg, q, scatter_gather["q"][0], scatter_gather["q"][1])
             k = _SeqAllToAll.apply(self.spg, k, scatter_gather["q"][0], scatter_gather["q"][1])
             v = _SeqAllToAll.apply(self.spg, v, scatter_gather["q"][0], scatter_gather["q"][1])
-            context_layer = self.local_attn(q, k, v, **kwargs)
+            context_layer = self.local_attn(q=q, k=k, v=v, **kwargs)
         output = _SeqAllToAll.apply(self.spg, context_layer, scatter_gather["output"][0], scatter_gather["output"][1])
 
         # out e.g., [s/p::h]
