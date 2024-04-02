@@ -110,6 +110,7 @@ config = Config(
         loss=dict(
             label_smoothing=0,
         ),
+        use_cuda_flash_attn=True,
     )
 )
 

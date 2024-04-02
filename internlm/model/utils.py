@@ -8,10 +8,16 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import Tensor
 from torch.distributed import ProcessGroup
+from torch.nn.utils.rnn import pad_sequence
 
 from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.core.context import global_context as gpc
 from internlm.utils.logger import get_logger
+
+try:
+    import fused_dense_lib as fused_dense_cuda
+except (ModuleNotFoundError, ImportError):
+    print("Import fused_dense_lib failed!")
 
 internlm_accelerator = get_accelerator()
 
@@ -290,10 +296,8 @@ class FusedDenseFunc(torch.autograd.Function):
         sequence_parallel = ctx.sequence_parallel
         gather_dim = ctx.gather_dim
 
-        if gpc.config.model.use_flash_attn:
-            import fused_dense_lib as fused_dense_cuda
-
-        if gpc.config.model.use_flash_attn and ctx.is_using_cuda:
+        if gpc.config.use_cuda_flash_attn and AcceleratorType.GPU == get_accelerator().get_accelerator_backend():
+            assert ctx.is_using_cuda, "CUDA Flash Attention only support GPU device"
             backward_func = fused_dense_cuda.linear_bias_wgrad
         else:
             backward_func = linear_bias_wgrad_torch
@@ -413,10 +417,8 @@ class MegatronFusedDenseFunc(torch.autograd.Function):
         process_group = ctx.process_group
         sequence_parallel = ctx.sequence_parallel
 
-        if gpc.config.model.use_flash_attn:
-            import fused_dense_lib as fused_dense_cuda
-
-        if gpc.config.model.use_flash_attn and ctx.is_using_cuda:
+        if gpc.config.use_cuda_flash_attn and AcceleratorType.GPU == get_accelerator().get_accelerator_backend():
+            assert ctx.is_using_cuda, "CUDA Flash Attention only support GPU device"
             backward_func = fused_dense_cuda.linear_bias_wgrad
         else:
             backward_func = linear_bias_wgrad_torch
@@ -520,10 +522,8 @@ class ISPFusedDenseFunc(torch.autograd.Function):
         module = ctx.module
         communicator = ctx.communicator
 
-        if gpc.config.model.use_flash_attn:
-            import fused_dense_lib as fused_dense_cuda
-
-        if gpc.config.model.use_flash_attn and ctx.is_using_cuda:
+        if gpc.config.use_cuda_flash_attn and AcceleratorType.GPU == get_accelerator().get_accelerator_backend():
+            assert ctx.is_using_cuda, "CUDA Flash Attention only support GPU device"
             backward_func = fused_dense_cuda.linear_bias_wgrad
         else:
             backward_func = linear_bias_wgrad_torch
@@ -598,7 +598,9 @@ def fused_dense_func(
     dtype_eligible = x.dtype in [torch.float16, torch.bfloat16] or (
         x.dtype == torch.float32 and torch.is_autocast_enabled()
     )
-    is_using_cuda = (internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU) and dtype_eligible
+    is_using_cuda = (
+        internlm_accelerator.get_accelerator_backend() in [AcceleratorType.GPU, AcceleratorType.DIPU]
+    ) and dtype_eligible
     return FusedDenseFunc.apply(
         x,
         weight,
@@ -623,7 +625,9 @@ def megatron_fused_dense_func(
     dtype_eligible = x.dtype in [torch.float16, torch.bfloat16] or (
         x.dtype == torch.float32 and torch.is_autocast_enabled()
     )
-    is_using_cuda = (internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU) and dtype_eligible
+    is_using_cuda = (
+        internlm_accelerator.get_accelerator_backend() in [AcceleratorType.GPU, AcceleratorType.DIPU]
+    ) and dtype_eligible
     return MegatronFusedDenseFunc.apply(
         x,
         weight,
@@ -647,7 +651,9 @@ def isp_fused_dense_func(
     dtype_eligible = x.dtype in [torch.float16, torch.bfloat16] or (
         x.dtype == torch.float32 and torch.is_autocast_enabled()
     )
-    is_using_cuda = (internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU) and dtype_eligible
+    is_using_cuda = (
+        internlm_accelerator.get_accelerator_backend() in [AcceleratorType.GPU, AcceleratorType.DIPU]
+    ) and dtype_eligible
     return ISPFusedDenseFunc.apply(
         x,
         weight,
@@ -665,9 +671,17 @@ def try_import_RMSNorm():
 
     """
     try:
-        from apex.normalization.fused_layer_norm import MixedFusedRMSNorm as RMSNorm
+        device_backend = internlm_accelerator.get_accelerator_backend()
+        if device_backend == AcceleratorType.DIPU:
+            from deeplink_ext.internlm_ops.rms_norm import (
+                DeepLinkRMSNormWithNormalizedShape as RMSNorm,
+            )
 
-        return RMSNorm
+            return RMSNorm
+        else:
+            from apex.normalization.fused_layer_norm import MixedFusedRMSNorm as RMSNorm
+
+            return RMSNorm
     except (ModuleNotFoundError, ImportError):
         logger.warning("The torch implementation for MixFusedRMSNorm is slower than apex. Please note this!")
         from internlm.model.ops.norm import RMSNormTorch as RMSNorm
@@ -686,3 +700,52 @@ def Silu(w1_o, w2_o):
 
 
 Silu = torch.jit.script(Silu)
+
+
+def unpack_qkv_before_attn(cur_input=None, cu_seqlens=None, padding_v: int = 0):
+    """
+    qkv: the shape is (1, packed_length, three, head_num, head_dim)
+    kv: the shape is (1, packed_length, two, head_num, head_dim)
+    q/k/v: the shape is (1, packed_length, head_num, head_dim)
+
+    Return:
+    output: the shape is (micro_bsz, seq_len, three, head_num, head_dim) for qkv
+                        (micro_bsz, seq_len, two, head_num, head_dim) for kv
+                        (micro_bsz, seq_len, head_num, head_dim) for q/k/v
+    """
+    if cu_seqlens is None or cur_input is None:
+        raise ValueError("cu_seqlens and cur_input must be provided.")
+
+    assert cur_input.shape[0] == 1
+    cur_input = cur_input.squeeze(0)
+
+    sequences = []
+    for i in range(len(cu_seqlens) - 1):
+        sequences.append(cur_input[cu_seqlens[i] : cu_seqlens[i + 1]])
+
+    padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=padding_v)
+
+    return padded_sequences
+
+
+def pack_output_after_attn(cur_input=None, cu_seqlens=None, padding_v: int = 0):
+    """
+    cur_input: the shape is (micro_bsz, seq_len, hidden_size)
+
+    Return:
+    output: the shape is (1, packed_length, hidden_size)
+    """
+    if cu_seqlens is None or cur_input is None:
+        raise ValueError("cu_seqlens and cur_input must be provided.")
+
+    packed_len_ = gpc.config.data.micro_bsz * gpc.config.data.seq_len
+    output_shape = list(cur_input.shape)
+    output_shape[0] = 1
+    output_shape[1] = packed_len_
+
+    output = torch.full(output_shape, fill_value=padding_v, device=cur_input.device, dtype=cur_input.dtype)
+    for i in range(len(cu_seqlens) - 1):
+        length = cu_seqlens[i + 1] - cu_seqlens[i]
+        output[0, cu_seqlens[i] : cu_seqlens[i + 1]] = cur_input[i, 0:length]
+
+    return output

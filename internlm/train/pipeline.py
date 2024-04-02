@@ -107,11 +107,11 @@ def set_parallel_attr_for_param_groups(model: Union[nn.Module, nn.ModuleList]):
                 setattr(param, IS_REPLICA_ZERO_PARALLEL, True)
 
         # embedding and head
-        if gpc.config.model.use_flash_attn:
+        if gpc.config.use_cuda_flash_attn:
             from flash_attn.modules.embedding import ParallelGPT2Embeddings
 
         if isinstance(module, (Embedding1D, BaseScaleColumnParallelLinear)) or (
-            gpc.config.model.use_flash_attn and isinstance(module, ParallelGPT2Embeddings)
+            gpc.config.use_cuda_flash_attn and isinstance(module, ParallelGPT2Embeddings)
         ):
             for param in module.parameters():
                 if gpc.is_initialized(ParallelMode.TENSOR) and is_using_isp():
@@ -299,11 +299,12 @@ def initialize_optimizer(model: Union[nn.Module, nn.ModuleList], isp_communicato
     adam_extra_kwargs = {}
     # set fused=True to avoid nan grad norm when model size is larger and use_fp32_norm=True
 
+    # TODO(caikun): add DIPU backend adamw
     if internlm_accelerator.get_accelerator_backend() == AcceleratorType.NPU:
         internlm_adamw = torch_npu.optim.NpuFusedAdamW
     else:
         internlm_adamw = torch.optim.AdamW
-        if torch.__version__ >= "2.1.0":
+        if torch.__version__ >= "2.1.0" and internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
             adam_extra_kwargs["fused"] = True
 
     naive_optimizer = internlm_adamw(

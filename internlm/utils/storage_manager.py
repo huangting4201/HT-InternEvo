@@ -4,9 +4,9 @@
 import multiprocessing
 import os
 
-import dill
-
 if "USE_DILL_PICKLE" in os.environ:
+    import dill
+
     dill.Pickler.dumps, dill.Pickler.loads = dill.dumps, dill.loads
     multiprocessing.reduction.ForkingPickler = dill.Pickler
     multiprocessing.reduction.dump = dill.dump

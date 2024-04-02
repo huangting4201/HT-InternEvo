@@ -24,7 +24,7 @@ def get_dataset_type_id(dataset_type_ids_map, path):
     return match_idxes[0]
 
 
-def unpack_data(input_ids, cu_seqlens, is_type_ids: bool = False):
+def unpack_data(input_ids, cu_seqlens, is_type_ids: bool = False, padding_v: int = 0):
     """
     input_ids: if input_ids is not type_ids, the shape is (1, packed_length)
                else the shape is (micro_num, packed_length)
@@ -36,16 +36,18 @@ def unpack_data(input_ids, cu_seqlens, is_type_ids: bool = False):
     """
     bsz = input_ids.shape[0]
 
-    num_sequence = gpc.config.data["micro_bsz"]
+    num_seq = gpc.config.data["micro_bsz"]
+    seq_len_ = gpc.config.data.seq_len
+    dtype_ = input_ids.dtype
 
-    outputs = torch.zeros(bsz, num_sequence, gpc.config.data.seq_len, device=input_ids.device, dtype=input_ids.dtype)
+    outputs = torch.empty(bsz, num_seq, seq_len_, device=input_ids.device, dtype=dtype_).fill_(padding_v)
 
     for i in range(bsz):
-        output = torch.zeros(num_sequence, gpc.config.data.seq_len, device=input_ids.device, dtype=input_ids.dtype)
+        output = torch.empty(num_seq, seq_len_, device=input_ids.device, dtype=dtype_).fill_(padding_v)
         cu_seqlens_slice = cu_seqlens[i]
-        for j in range(num_sequence):
-            seq_length = cu_seqlens_slice[j + 1] - cu_seqlens_slice[j]
-            output[j, 0:seq_length] = input_ids[i, cu_seqlens_slice[j] : cu_seqlens_slice[j + 1]]
+        for j in range(num_seq):
+            length = cu_seqlens_slice[j + 1] - cu_seqlens_slice[j]
+            output[j, 0:length] = input_ids[i, cu_seqlens_slice[j] : cu_seqlens_slice[j + 1]]
         outputs[i] = output
 
     # if the input_ids is not type_ids, we need squeeze the first dimension if it is 1.

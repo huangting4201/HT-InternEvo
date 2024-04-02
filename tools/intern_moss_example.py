@@ -4,13 +4,14 @@ from peft import LoraConfig, TaskType, get_peft_model
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from internlm.accelerator import get_accelerator, internlm_accelerator
+from internlm.accelerator import get_accelerator
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     get_linear_schedule_with_warmup,
 )
 
+internlm_accelerator = get_accelerator()
 model_path = "model_path"
 data_dir = "moss_002_sft"
 data_num = -1

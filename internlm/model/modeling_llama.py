@@ -19,10 +19,8 @@ from internlm.initialize.initialize_tensor import (
 from internlm.model.modules.embedding import Embedding1D, RotaryEmbedding
 from internlm.model.modules.mlp import get_mlp_cls
 from internlm.model.modules.multi_head_attention import (
-    CrossAttention,
-    DistributedAttention,
-    SelfAttention,
     _update_kv_cache,
+    get_gqa_attn_cls,
 )
 from internlm.model.ops.linear import (
     RewardModelLinear,
@@ -31,8 +29,10 @@ from internlm.model.ops.linear import (
 )
 from internlm.model.utils import (
     gather_forward_split_backward,
+    pack_output_after_attn,
     split_forward_gather_backward,
     try_import_RMSNorm,
+    unpack_qkv_before_attn,
 )
 from internlm.solver.activation_checkpoint import activation_checkpoint
 from internlm.solver.pipeline_utils import partition_uniform
@@ -148,24 +148,12 @@ class MHA(nn.Module):
             **factory_kwargs,
         )
 
-        if use_flash_attn:
-            from flash_attn import flash_attn_varlen_kvpacked_func
-            from flash_attn.modules.mha import FlashCrossAttention, FlashSelfAttention
-
-        inner_attn_cls = FlashSelfAttention if use_flash_attn else SelfAttention
-        inner_cross_attn_cls = FlashCrossAttention if use_flash_attn else CrossAttention
-        self.inner_attn = inner_attn_cls(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout)
-        self.inner_cross_attn = inner_cross_attn_cls(
-            causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout
+        self.inner_attn, self.inner_cross_attn = get_gqa_attn_cls(
+            use_flash_attn, self.tp_mode, causal, softmax_scale, dropout, sequence_process_group
         )
-
         self.inner_cross_attn_causal = causal
         self.inner_cross_attn_softmax_scale = softmax_scale
         self.inner_cross_attn_dropout = dropout
-
-        self.attn = flash_attn_varlen_kvpacked_func if use_flash_attn else SelfAttention
-        if self.tp_mode == "isp":
-            self.attn = DistributedAttention(self.attn, sequence_process_group=sequence_process_group)
 
         # output projection always have the bias (for now)
         out_proj_cls = get_linear_cls(self.tp_mode, "row")
@@ -217,9 +205,9 @@ class MHA(nn.Module):
                 if kv.dtype not in [torch.float16, torch.bfloat16]:
                     kv = kv.to(torch.bfloat16)
                 with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
-                    context = self.inner_cross_attn(q, kv).to(self.dtype)
+                    context = self.inner_cross_attn(q=q, kv=kv).to(self.dtype)
             else:
-                context = self.inner_cross_attn(q, kv)
+                context = self.inner_cross_attn(q=q, kv=kv)
 
         else:
             assert self.rotary_emb_dim > 0
@@ -293,7 +281,7 @@ class MHA(nn.Module):
             kv = torch.where(torch.isnan(kv), 0, kv)
 
             if hasattr(inference_params, "attention_mask") and inference_params.attention_mask is not None:
-                assert self.use_flash_attn is True
+                assert gpc.config.use_cuda_flash_attn is True
                 from flash_attn.flash_attn_interface import FlashAttnVarlenKVPackedFunc
 
                 if inference_params.sequence_len_offset == 0:  # First entrance, attnmask (bs*seqlen*seqlen)
@@ -388,9 +376,9 @@ class MHA(nn.Module):
                     if kv.dtype not in [torch.float16, torch.bfloat16]:
                         kv = kv.to(torch.bfloat16)
                     with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
-                        context = self.inner_cross_attn(q, kv, causal=True).to(self.dtype)
+                        context = self.inner_cross_attn(q=q, kv=kv, causal=True).to(self.dtype)
                 else:
-                    context = self.inner_cross_attn(q, kv, causal=True)
+                    context = self.inner_cross_attn(q=q, kv=kv, causal=True)
         if seqlen is None:
             context = rearrange(context, "b s h d -> b s (h d)")
         else:
@@ -422,6 +410,7 @@ class MHA(nn.Module):
             k = torch.cat([k[..., ::2], k[..., 1::2]], dim=-1)
 
         indexes = kwargs.pop("indexes")
+
         q = self.rotary_emb._single_forward(q, indexes=indexes)
         k = self.rotary_emb._single_forward(k, indexes=indexes)
 
@@ -431,6 +420,10 @@ class MHA(nn.Module):
             if internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
                 q = q.squeeze(0)
                 kv = kv.squeeze(0)
+            # since torch_npu only supports fa with no packed data currently, qkv should be unpacked
+            elif internlm_accelerator.get_accelerator_backend() in [AcceleratorType.NPU, AcceleratorType.DIPU]:
+                q = unpack_qkv_before_attn(q, kwargs["cu_seqlens"])
+                kv = unpack_qkv_before_attn(kv, kwargs["cu_seqlens"])
 
             if self.dtype is torch.float32:
                 if q.dtype not in [torch.float16, torch.bfloat16]:
@@ -438,7 +431,7 @@ class MHA(nn.Module):
                 if kv.dtype not in [torch.float16, torch.bfloat16]:
                     kv = kv.to(torch.bfloat16)
                 with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
-                    context = self.attn(
+                    context = self.inner_attn(
                         q=q,
                         kv=kv,
                         cu_seqlens_q=kwargs["cu_seqlens"],
@@ -450,7 +443,7 @@ class MHA(nn.Module):
                         causal=self.inner_cross_attn_causal,
                     ).to(self.dtype)
             else:
-                context = self.attn(
+                context = self.inner_attn(
                     q=q,
                     kv=kv,
                     cu_seqlens_q=kwargs["cu_seqlens"],
@@ -464,10 +457,12 @@ class MHA(nn.Module):
         else:
             raise RuntimeError("Not support this right now")
 
-        context = rearrange(context, "b h d -> b (h d)")  # recover shape
-        # restore bsz dimension
         if internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
-            context = context.unsqueeze(0)
+            context = rearrange(context, "s h d -> s (h d)")  # recover the shape
+            context = context.unsqueeze(0)  # restore bsz dimension
+        elif internlm_accelerator.get_accelerator_backend() in [AcceleratorType.NPU, AcceleratorType.DIPU]:
+            context = rearrange(context, "b s h d -> b s (h d)")  # recover the shape
+            context = pack_output_after_attn(context, kwargs["cu_seqlens"])
 
         out = self.wo(context)
         return out
@@ -532,6 +527,8 @@ class PackedFlashLlamaLayer1D(nn.Module):
         init_type: str = "normal",
         rope_base: int = 10000,
         tp_mode: str = "mtp",
+        mlp_layer_fusion: bool = False,
+        multiple_of: int = 256,
     ):
         super().__init__()
         self.checkpoint = checkpoint
@@ -579,14 +576,14 @@ class PackedFlashLlamaLayer1D(nn.Module):
         else:
             self.attention_norm = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
             self.ffn_norm = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
-        if self.fused_dropout_add_ln and self.use_flash_attn:
+        if self.fused_dropout_add_ln and gpc.config.use_cuda_flash_attn:
             from flash_attn.ops.layer_norm import dropout_add_layer_norm
 
             assert dropout_add_layer_norm is not None, "dropout_add_ln is not installed"
             assert isinstance(self.attention_norm, nn.LayerNorm) and isinstance(self.dropout1, nn.Dropout)
 
         sequence_parallel = gpc.config.parallel.get("sequence_parallel", False)
-        if use_swiglu or not gpc.config.model.use_flash_attn:
+        if use_swiglu or not gpc.config.use_cuda_flash_attn:
             mlp_cls = get_mlp_cls(self.tp_mode)
             self.feed_forward = mlp_cls(
                 hidden_size,
@@ -596,6 +593,9 @@ class PackedFlashLlamaLayer1D(nn.Module):
                 bias=False,
                 device=device,
                 dtype=dtype,
+                mlp_layer_fusion=mlp_layer_fusion,
+                sequence_parallel=gpc.config.parallel.sequence_parallel,
+                multiple_of=multiple_of,
             )
         else:
             from flash_attn.modules.mlp import ParallelFusedMLP
@@ -647,6 +647,7 @@ class PackedFlashLlamaLayer1D(nn.Module):
                     if self.use_scaled_init and "w2" in name:
                         self.scaled_init_func(sigma=self.ffn_other_init_std, num_layers=self.layer_idx + 1)(param.data)
                     else:
+                        # candidate: w1, w3, fused_w1_w3
                         self.init_func(
                             std=self.ffn_uplayer_init_std if "w1" in name or "w3" in name else self.ffn_other_init_std
                         )(param.data)
@@ -827,6 +828,8 @@ class PackedFlashLlama1D(nn.Module):
         out_head_init_std: float = 0.02,
         init_type: str = "normal",
         rope_base: int = 10000,
+        mlp_layer_fusion: bool = False,
+        multiple_of: int = 256,
     ):
         super().__init__()
 
@@ -847,7 +850,7 @@ class PackedFlashLlama1D(nn.Module):
             head_cls = ScaleColumnParallelLinear
 
         if first:
-            if embed_split_hidden or not gpc.config.model.use_flash_attn:
+            if embed_split_hidden or not gpc.config.use_cuda_flash_attn:
                 self.tok_embeddings = Embedding1D(num_embeddings=vocab_size, embedding_dim=hidden_size)
             else:
                 from flash_attn.modules.embedding import ParallelGPT2Embeddings
@@ -900,6 +903,8 @@ class PackedFlashLlama1D(nn.Module):
                     init_type=init_type,
                     rope_base=rope_base,
                     tp_mode=self.tp_mode,
+                    mlp_layer_fusion=mlp_layer_fusion,
+                    multiple_of=multiple_of,
                 )
                 for lid in range(num_layers)
             ]
@@ -1056,6 +1061,8 @@ def build_model_with_cfg(
     out_head_init_std: float = 0.02,
     init_type: str = "normal",
     rope_base: int = 10000,
+    mlp_layer_fusion: bool = False,
+    multiple_of: int = 256,
 ):
     """
     Builde model with config
@@ -1131,6 +1138,8 @@ def build_model_with_cfg(
         out_head_init_std=out_head_init_std,
         init_type=init_type,
         rope_base=rope_base,
+        mlp_layer_fusion=mlp_layer_fusion,
+        multiple_of=multiple_of,
     )
 
     return _build_generic_model_1d(num_layers=num_layers, num_chunks=num_chunks, **cfg)

@@ -218,7 +218,7 @@ class ParamAsyncBcastHandler:
             # so everything is fine.
 
             embedding_head_cls = (Embedding1D, BaseScaleColumnParallelLinear)
-            if gpc.config.model.use_flash_attn:
+            if gpc.config.use_cuda_flash_attn:
                 from flash_attn.modules.embedding import ParallelGPT2Embeddings
 
                 embedding_head_cls = (Embedding1D, ParallelGPT2Embeddings, BaseScaleColumnParallelLinear)

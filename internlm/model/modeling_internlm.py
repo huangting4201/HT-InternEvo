@@ -75,6 +75,8 @@ class PackedFlashBaseLayer1D(nn.Module):
         use_flash_attn: bool = True,
         tp_mode: str = "mtp",
         rope_base: int = 10000,
+        mlp_layer_fusion: bool = False,
+        multiple_of: int = 256,
     ):
         super().__init__()
         self.checkpoint = checkpoint
@@ -125,8 +127,12 @@ class PackedFlashBaseLayer1D(nn.Module):
                 bias=False,
                 device=device,
                 dtype=dtype,
+                mlp_layer_fusion=mlp_layer_fusion,
+                sequence_parallel=gpc.config.parallel.sequence_parallel,
+                multiple_of=multiple_of,
             )
         else:
+            assert gpc.config.use_cuda_flash_attn is True
             from flash_attn.modules.mlp import ParallelFusedMLP
 
             self.mlp = ParallelFusedMLP(
@@ -170,6 +176,7 @@ class PackedFlashBaseLayer1D(nn.Module):
                     if self.use_scaled_init and "w2" in name:
                         scaled_init_method_normal(sigma=0.006, num_layers=self.layer_idx + 1)(param.data)
                     else:
+                        # candidate: w1, w3, fused_w1_w3
                         normal_(std=0.006 if "w1" in name or "w3" in name else 0.0015)(param.data)
                 else:
                     if self.use_scaled_init and "fc1" not in name:
@@ -296,6 +303,8 @@ class PackedFlashInternLm1D(nn.Module):
         use_swiglu: bool = True,
         use_flash_attn: bool = True,
         rope_base: int = 10000,
+        mlp_layer_fusion: bool = False,
+        multiple_of: int = 256,
     ):
         super().__init__()
 
@@ -309,7 +318,7 @@ class PackedFlashInternLm1D(nn.Module):
         else:
             head_cls = ScaleColumnParallelLinear
         if first:
-            if embed_split_hidden or not use_flash_attn:
+            if embed_split_hidden or not gpc.config.use_cuda_flash_attn:
                 self.embedding = Embedding1D(num_embeddings=vocab_size, embedding_dim=hidden_size)
             else:
                 from flash_attn.modules.embedding import ParallelGPT2Embeddings
@@ -351,6 +360,8 @@ class PackedFlashInternLm1D(nn.Module):
                     use_flash_attn=use_flash_attn,
                     tp_mode=self.tp_mode,
                     rope_base=rope_base,
+                    mlp_layer_fusion=mlp_layer_fusion,
+                    multiple_of=multiple_of,
                 )
                 for lid in range(num_layers)
             ]
@@ -487,6 +498,8 @@ def build_model_with_cfg(
     use_swiglu: bool = True,
     use_flash_attn: bool = True,
     rope_base: int = 10000,
+    mlp_layer_fusion: bool = False,
+    multiple_of: int = 256,
 ):
     """
     Build model with config.
@@ -544,6 +557,8 @@ def build_model_with_cfg(
         use_swiglu=use_swiglu,
         use_flash_attn=use_flash_attn,
         rope_base=rope_base,
+        mlp_layer_fusion=mlp_layer_fusion,
+        multiple_of=multiple_of,
     )
 
     return _build_generic_model_1d(num_layers=num_layers, num_chunks=num_chunks, **cfg)

@@ -177,7 +177,7 @@ class NaiveAMPModel(nn.Module):
         def _post_forward_hook_for_fp32(
             model: nn.Module, inputs: tuple, outputs: Union[tuple, Tensor]
         ):  # pylint: disable=W0613
-            assert isinstance(inputs, Union[tuple, Tensor])
+            assert isinstance(inputs, (tuple, Tensor))
             if isinstance(outputs, tuple):
                 return tuple(map(to_dtype, outputs, [self.dtype] * len(outputs)))
             else:

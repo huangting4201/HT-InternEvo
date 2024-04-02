@@ -9,10 +9,12 @@ import torch
 import tqdm
 from datasets import load_dataset
 
-from internlm.accelerator import get_accelerator, internlm_accelerator
+from internlm.accelerator import get_accelerator
 from internlm.utils.timeout import Timeout
 from tools.interface import GenerationConfig, generate_interactive
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+internlm_accelerator = get_accelerator()
 
 # flake8: noqa
 
