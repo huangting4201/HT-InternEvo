@@ -10,7 +10,7 @@ from internlm.core.context import global_context as gpc
 from internlm.monitor.alert import send_feishu_msg_with_webhook
 from internlm.utils.common import SingletonMeta
 
-from .utils import get_job_key, set_env_var, try_import_send_exception
+from .utils import get_job_key, set_env_var
 
 
 def send_alert_message(address: str = None, title: str = None, message: str = None):
@@ -134,7 +134,6 @@ class MonitorManager(metaclass=SingletonMeta):
         self.monitor_thread = None
         self.loss_spike_limit = loss_spike_limit
         self.last_step_loss = -1
-        self.send_exception = try_import_send_exception()
         self.alert_file_path = None
         self.enable_alert = False
         self.light_monitor_address = None
@@ -183,8 +182,6 @@ class MonitorManager(metaclass=SingletonMeta):
             for line in filtered_trace:
                 format_trace += "\n" + line
 
-            if self.send_exception and self.light_monitor_address:
-                self.send_exception(format_trace, gpc.get_global_rank())
             message = f"Catch Exception from {socket.gethostname()} with rank id {gpc.get_global_rank()}:{format_trace}"
             if self.alert_file_path:
                 if self.exception_should_be_alert(format_trace, alert_address):
@@ -204,8 +201,6 @@ class MonitorManager(metaclass=SingletonMeta):
                 print("receive frame: ", frame)
                 print("receive signal: ", sys_signal)
                 message = f"Process received signal {signal} and exited."
-                if self.send_exception and self.light_monitor_address:
-                    self.send_exception(message, gpc.get_global_rank())
                 send_alert_message(
                     address=alert_address,
                     message=message,
