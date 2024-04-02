@@ -9,8 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from internlm.accelerator import get_accelerator, internlm_accelerator
+from internlm.accelerator import get_accelerator
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+internlm_accelerator = get_accelerator()
 
 
 @asynccontextmanager

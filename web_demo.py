@@ -12,12 +12,13 @@ from dataclasses import asdict
 import streamlit as st
 import torch
 
-from internlm.accelerator import internlm_accelerator
+from internlm.accelerator import get_accelerator
 from tools.interface import GenerationConfig, generate_interactive
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.utils import logging
 
 logger = logging.get_logger(__name__)
+internlm_accelerator = get_accelerator()
 
 
 def on_btn_click():

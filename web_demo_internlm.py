@@ -6,7 +6,7 @@ import logging
 import streamlit as st
 from sentencepiece import SentencePieceProcessor
 
-from internlm.accelerator import internlm_accelerator
+from internlm.accelerator import get_accelerator
 from tools.interface import GenerationConfig
 from tools.load_internlm_model import (
     initialize_internlm_model,
@@ -14,6 +14,7 @@ from tools.load_internlm_model import (
 )
 
 logger = logging.getLogger(__file__)
+internlm_accelerator = get_accelerator()
 
 
 MODEL_CONFIG_MAP = {

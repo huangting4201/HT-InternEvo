@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import Tensor, nn
 
-from internlm.accelerator import get_accelerator
+from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 
@@ -170,7 +170,12 @@ class ApplyRotaryEmb(torch.autograd.Function):
         return dx, None, None, None, None
 
 
-apply_rotary_emb = ApplyRotaryEmb.apply
+if AcceleratorType.DIPU == internlm_accelerator.get_accelerator_backend():
+    from deeplink_ext.internlm_ops.rotary.deeplink import DeeplinkApplyRotaryEmb
+
+    apply_rotary_emb = DeeplinkApplyRotaryEmb.apply
+else:
+    apply_rotary_emb = ApplyRotaryEmb.apply
 
 
 class ApplyRotaryEmbQKV_(torch.autograd.Function):
@@ -253,7 +258,12 @@ class ApplyRotaryEmbQKV_(torch.autograd.Function):
         return dqkv, None, None, None, None, None
 
 
-apply_rotary_emb_qkv_ = ApplyRotaryEmbQKV_.apply
+if AcceleratorType.DIPU == internlm_accelerator.get_accelerator_backend():
+    from deeplink_ext.internlm_ops.rotary.deeplink import DeeplinkApplyRotaryEmbQKV_
+
+    apply_rotary_emb_qkv_ = DeeplinkApplyRotaryEmbQKV_.apply
+else:
+    apply_rotary_emb_qkv_ = ApplyRotaryEmbQKV_.apply
 
 
 class RotaryEmbedding(torch.nn.Module):

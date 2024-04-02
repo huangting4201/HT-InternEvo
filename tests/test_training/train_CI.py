@@ -17,7 +17,6 @@ project_root = os.path.abspath(os.path.join(script_dir, "../../"))
 sys.path.append(project_root)
 
 import internlm  # noqa: E402
-from internlm.accelerator import get_accelerator  # noqa: E402
 from internlm.checkpoint import CheckpointManager  # noqa: E402
 from internlm.core.context import ParallelMode  # noqa: E402
 from internlm.core.context import global_context as gpc  # noqa: E402
@@ -57,8 +56,6 @@ from internlm.utils.writer import Writer  # noqa: E402
 
 # global llm logger
 logger = get_logger(__file__)
-
-internlm_accelerator = get_accelerator()
 
 
 def initialize_llm_logger(start_time: str):

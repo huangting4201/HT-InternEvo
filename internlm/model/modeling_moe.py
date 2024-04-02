@@ -79,6 +79,8 @@ class PackedFlashBaseLayer1D(nn.Module):
         use_flash_attn: bool = True,
         num_experts: int = 1,
         tp_mode: str = "mtp",
+        mlp_layer_fusion: bool = False,
+        multiple_of: int = 256,
     ):
         super().__init__()
         self.checkpoint = checkpoint
@@ -130,6 +132,9 @@ class PackedFlashBaseLayer1D(nn.Module):
                     bias=False,
                     device=device,
                     dtype=dtype,
+                    mlp_layer_fusion=mlp_layer_fusion,
+                    sequence_parallel=gpc.config.parallel.sequence_parallel,
+                    multiple_of=multiple_of,
                 )
             else:
                 from flash_attn.modules.mlp import ParallelFusedMLP
@@ -190,6 +195,7 @@ class PackedFlashBaseLayer1D(nn.Module):
                     if self.use_scaled_init and "w2" in name:
                         scaled_init_method_normal(sigma=0.006, num_layers=self.layer_idx + 1)(param.data)
                     else:
+                        # candidate: w1, w3, fused_w1_w3
                         normal_(std=0.006 if "w1" in name or "w3" in name else 0.0015)(param.data)
                 else:
                     if self.use_scaled_init and "fc1" not in name:
@@ -323,6 +329,8 @@ class PackedFlashInternLm1D(nn.Module):
         use_swiglu: bool = True,
         use_flash_attn: bool = True,
         num_experts: bool = 1,
+        mlp_layer_fusion: bool = False,
+        multiple_of: int = 256,
     ):
         super().__init__()
 
@@ -378,6 +386,8 @@ class PackedFlashInternLm1D(nn.Module):
                     use_flash_attn=use_flash_attn,
                     num_experts=num_experts,
                     tp_mode=self.tp_mode,
+                    mlp_layer_fusion=mlp_layer_fusion,
+                    multiple_of=multiple_of,
                 )
                 for lid in range(num_layers)
             ]
@@ -517,6 +527,8 @@ def build_model_with_moe_cfg(
     num_experts: int = 1,
     moe_use_residual: bool = False,  # pylint: disable=W0613
     moe_type: str = None,  # pylint: disable=W0613
+    mlp_layer_fusion: bool = False,
+    multiple_of: int = 256,
 ):
     """
     Build model with config.
@@ -576,6 +588,8 @@ def build_model_with_moe_cfg(
         use_swiglu=use_swiglu,
         use_flash_attn=use_flash_attn,
         num_experts=num_experts,
+        mlp_layer_fusion=mlp_layer_fusion,
+        multiple_of=multiple_of,
     )
 
     return _build_generic_model_1d(num_layers=num_layers, num_chunks=num_chunks, **cfg)

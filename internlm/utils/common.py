@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 import internlm
-from internlm.accelerator import get_accelerator
+from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.utils.logger import get_logger
 
 CURRENT_TIME = None
@@ -239,7 +239,7 @@ def get_megatron_flops(
 
 
 def enable_pytorch_expandable_segments():
-    if torch.__version__ >= "2.1.0" and "cuda" in internlm_accelerator.current_device_name():
+    if torch.__version__ >= "2.1.0" and AcceleratorType.GPU == internlm_accelerator.get_accelerator_backend():
         _alloc_setting = "expandable_segments:True"
         if os.getenv("PYTORCH_CUDA_ALLOC_CONF", None) is not None:
             _alloc_setting = os.getenv("PYTORCH_CUDA_ALLOC_CONF") + "," + _alloc_setting

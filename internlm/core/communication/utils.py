@@ -7,7 +7,6 @@ import torch
 import torch.distributed as dist
 from torch import nn
 
-from internlm.accelerator import get_accelerator
 from internlm.core.communication.isp import ISPCommunicator
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
@@ -15,9 +14,6 @@ from internlm.core.naive_amp import NaiveAMPModel
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.ops.linear import BaseScaleColumnParallelLinear
 from internlm.utils.common import get_current_device
-
-internlm_accelerator = get_accelerator()
-
 
 TensorShape = Union[torch.Size, List[int], Tuple[int]]
 

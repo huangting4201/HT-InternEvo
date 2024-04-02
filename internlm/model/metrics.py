@@ -90,7 +90,7 @@ class AccPerplex:
 
         self.loss_with_type_id = LossWithTypeId(device, dp_pg, dataset_types)
 
-        if internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
+        if internlm_accelerator.get_accelerator_backend() in [AcceleratorType.GPU, AcceleratorType.DIPU]:
             self.scatter_sum = cuda_scatter
         else:
             self.scatter_sum = vanilla_scatter
@@ -156,7 +156,7 @@ class AccPerplex:
             acc = corrects.sum()
             torch.distributed.all_reduce(acc, op=torch.distributed.ReduceOp.SUM, group=self.tp_pg)
             # The synchronization here is to prevent unpredictable HANG when the NPU is running.
-            if internlm_accelerator.get_accelerator_backend() == AcceleratorType.NPU:
+            if internlm_accelerator.get_accelerator_backend() in [AcceleratorType.NPU, AcceleratorType.DIPU]:
                 internlm_accelerator.current_stream().synchronize()
             self.right += acc  # Masked_fill is not needed here because -100 is not available anyway
             self.total += mask.sum()
@@ -262,7 +262,7 @@ class LossWithTypeId:
             self.ds_loss = torch.zeros(self.total_type_count, dtype=torch.float, device=device)
             self.ds_token_num = torch.zeros(self.total_type_count, dtype=torch.float, device=device)
 
-        if gpc.config.use_cuda_flash_attn:
+        if gpc.config.use_cuda_flash_attn and AcceleratorType.GPU == get_accelerator():
             from flash_attn.losses.cross_entropy import (
                 CrossEntropyLoss as FlashCrossEntropyLoss,
             )
@@ -273,7 +273,7 @@ class LossWithTypeId:
         else:
             self.loss_fn = nn.CrossEntropyLoss(reduction="none")
 
-        if internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
+        if internlm_accelerator.get_accelerator_backend() in [AcceleratorType.GPU, AcceleratorType.DIPU]:
             self.scatter_sum = cuda_scatter
         else:
             self.scatter_sum = vanilla_scatter

@@ -323,7 +323,9 @@ def args_sanity_check():
         gpc.config.model._add_item("use_flash_attn", True)
 
     gpc.config["use_cuda_flash_attn"] = False
-    if gpc.config.model.use_flash_attn and internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
+    if gpc.config.model.use_flash_attn and (
+        internlm_accelerator.get_accelerator_backend() in [AcceleratorType.GPU, AcceleratorType.DIPU]
+    ):
         gpc.config["use_cuda_flash_attn"] = True
 
     old_parallel_output = gpc.config.model.get("parallel_output", None)
@@ -351,6 +353,9 @@ def args_sanity_check():
             check_megablock_installed()
             check_stk_installed()
 
+    if "mlp_layer_fusion" not in model:
+        model._add_item("mlp_layer_fusion", False)
+
     # process the parallel config
     if "sequence_parallel" not in gpc.config.parallel:
         gpc.config.parallel._add_item("sequence_parallel", False)
@@ -373,14 +378,15 @@ def args_sanity_check():
     ], "invalid tensor parallel mode, only ['mtp', 'msp', 'fsp', 'isp'] is supported"
 
     # for NPU accelerator supports: 1）FA-True + Packed-True 2) FA-False + Packed-False
+    # for DIPU accelerator supports: 1）FA-True + Packed-False 2) FA-False + Packed-False
     # for GPU accelerator supports: 1）FA-True + Packed-True 2) FA-False + Packed-False
-    if (
-        gpc.config.parallel["tensor"]["mode"] == "isp"
-        and internlm_accelerator.get_accelerator_backend() == AcceleratorType.NPU
-    ):
+    if gpc.config.parallel["tensor"]["mode"] == "isp" and internlm_accelerator.get_accelerator_backend() in [
+        AcceleratorType.NPU,
+        AcceleratorType.DIPU,
+    ]:
         assert (
             gpc.config.data.use_packed_dataset is False
-        ), "only unpacked data is supported when tensor parallel mode is isp and accelerator type is NPU"
+        ), "only unpacked data is supported when tensor parallel mode is isp and accelerator type is NPU or DIPU"
     else:
         assert (
             gpc.config.model.use_flash_attn == gpc.config.data.use_packed_dataset

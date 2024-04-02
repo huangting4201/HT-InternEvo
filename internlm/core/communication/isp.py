@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 
-from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, Dict, List, Union
 
@@ -16,16 +15,25 @@ from internlm.model.utils import all_gather_raw, reduce_scatter_raw
 from internlm.utils.common import SchedulerHook, get_current_device
 
 
-@dataclass
 class ISPCommModelConfig:
     """
     model config for isp communicator.
     """
 
-    dtype: torch.dtype = torch.half
-    device: torch.device = get_current_device()
-    activation_checkpointing: float = 0.0
-    module_shapes: Dict[str, torch.Size] = None
+    def __init__(
+        self,
+        dtype: torch.dtype = torch.half,
+        device: torch.device = None,
+        activation_checkpointing: float = 0.0,
+        module_shapes: Dict[str, torch.Size] = None,
+    ) -> None:
+        self.dtype = dtype
+        if device is None:
+            self.device = get_current_device()
+        else:
+            self.device = device
+        self.activation_checkpointing = activation_checkpointing
+        self.module_shapes = module_shapes
 
 
 class MemoryPool:

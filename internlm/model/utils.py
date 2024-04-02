@@ -295,7 +295,7 @@ class FusedDenseFunc(torch.autograd.Function):
         sequence_parallel = ctx.sequence_parallel
         gather_dim = ctx.gather_dim
 
-        if gpc.config.use_cuda_flash_attn:
+        if gpc.config.use_cuda_flash_attn and AcceleratorType.GPU == get_accelerator().get_accelerator_backend():
             assert ctx.is_using_cuda, "CUDA Flash Attention only support GPU device"
             backward_func = fused_dense_cuda.linear_bias_wgrad
         else:
@@ -416,7 +416,7 @@ class MegatronFusedDenseFunc(torch.autograd.Function):
         process_group = ctx.process_group
         sequence_parallel = ctx.sequence_parallel
 
-        if gpc.config.use_cuda_flash_attn:
+        if gpc.config.use_cuda_flash_attn and AcceleratorType.GPU == get_accelerator().get_accelerator_backend():
             assert ctx.is_using_cuda, "CUDA Flash Attention only support GPU device"
             backward_func = fused_dense_cuda.linear_bias_wgrad
         else:
@@ -521,7 +521,7 @@ class ISPFusedDenseFunc(torch.autograd.Function):
         module = ctx.module
         communicator = ctx.communicator
 
-        if gpc.config.use_cuda_flash_attn:
+        if gpc.config.use_cuda_flash_attn and AcceleratorType.GPU == get_accelerator().get_accelerator_backend():
             assert ctx.is_using_cuda, "CUDA Flash Attention only support GPU device"
             backward_func = fused_dense_cuda.linear_bias_wgrad
         else:
@@ -597,7 +597,9 @@ def fused_dense_func(
     dtype_eligible = x.dtype in [torch.float16, torch.bfloat16] or (
         x.dtype == torch.float32 and torch.is_autocast_enabled()
     )
-    is_using_cuda = (internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU) and dtype_eligible
+    is_using_cuda = (
+        internlm_accelerator.get_accelerator_backend() in [AcceleratorType.GPU, AcceleratorType.DIPU]
+    ) and dtype_eligible
     return FusedDenseFunc.apply(
         x,
         weight,
@@ -622,7 +624,9 @@ def megatron_fused_dense_func(
     dtype_eligible = x.dtype in [torch.float16, torch.bfloat16] or (
         x.dtype == torch.float32 and torch.is_autocast_enabled()
     )
-    is_using_cuda = (internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU) and dtype_eligible
+    is_using_cuda = (
+        internlm_accelerator.get_accelerator_backend() in [AcceleratorType.GPU, AcceleratorType.DIPU]
+    ) and dtype_eligible
     return MegatronFusedDenseFunc.apply(
         x,
         weight,
@@ -646,7 +650,9 @@ def isp_fused_dense_func(
     dtype_eligible = x.dtype in [torch.float16, torch.bfloat16] or (
         x.dtype == torch.float32 and torch.is_autocast_enabled()
     )
-    is_using_cuda = (internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU) and dtype_eligible
+    is_using_cuda = (
+        internlm_accelerator.get_accelerator_backend() in [AcceleratorType.GPU, AcceleratorType.DIPU]
+    ) and dtype_eligible
     return ISPFusedDenseFunc.apply(
         x,
         weight,
@@ -664,9 +670,17 @@ def try_import_RMSNorm():
 
     """
     try:
-        from apex.normalization.fused_layer_norm import MixedFusedRMSNorm as RMSNorm
+        device_backend = internlm_accelerator.get_accelerator_backend()
+        if device_backend == AcceleratorType.DIPU:
+            from deeplink_ext.internlm_ops.rms_norm import (
+                DeepLinkRMSNormWithNormalizedShape as RMSNorm,
+            )
 
-        return RMSNorm
+            return RMSNorm
+        else:
+            from apex.normalization.fused_layer_norm import MixedFusedRMSNorm as RMSNorm
+
+            return RMSNorm
     except (ModuleNotFoundError, ImportError):
         logger.warning("The torch implementation for MixFusedRMSNorm is slower than apex. Please note this!")
         from internlm.model.ops.norm import RMSNormTorch as RMSNorm

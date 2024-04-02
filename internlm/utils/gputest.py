@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 from torch.utils import benchmark
 
-from internlm.accelerator import get_accelerator
+from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.model.modules.multi_head_attention import SelfAttention
 from internlm.monitor import send_alert_message
 from internlm.utils.common import get_current_device
@@ -94,7 +94,7 @@ def get_gpu_temperature():
     except AssertionError:
         gpu_id = -1
 
-    if GPUtil is not None and gpu_id >= 0:
+    if GPUtil is not None and gpu_id >= 0 and internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
         gpus = GPUtil.getGPUs()
         gpu_temperature = gpus[gpu_id].temperature
     else:
@@ -236,9 +236,14 @@ def bench_gpu(use_flash_attn=True):
     nheads = dim // headdim
 
     if use_flash_attn:
-        from flash_attn.modules.mha import FlashSelfAttention
+        if internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
+            from flash_attn.modules.mha import FlashSelfAttention
 
-        inner_attn = FlashSelfAttention
+            inner_attn = FlashSelfAttention
+        elif internlm_accelerator.get_accelerator_backend() == AcceleratorType.DIPU:
+            from deeplink_ext.internlm_ops.mha import DeepLinkSelfAttention
+
+            inner_attn = DeepLinkSelfAttention
     else:
         inner_attn = SelfAttention
 
