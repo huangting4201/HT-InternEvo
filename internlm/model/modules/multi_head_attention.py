@@ -844,7 +844,7 @@ class MHA(nn.Module):
             qkv = qkv.squeeze(0)
         # since torch_npu only supports fa with no packed data currently, qkv should be unpacked
         elif internlm_accelerator.get_accelerator_backend() in [AcceleratorType.NPU, AcceleratorType.DIPU]:
-            qkv = unpack_qkv_before_attn(qkv, kwargs["cu_seqlens"], kwargs["max_seqlen"])
+            qkv = unpack_qkv_before_attn(qkv, kwargs["cu_seqlens"])
             kwargs.pop("cu_seqlens")
             kwargs.pop("max_seqlen")
 
