@@ -17,7 +17,6 @@ from internlm.model.moe.megablock.utils import (
     check_megablock_installed,
     check_stk_installed,
 )
-from internlm.monitor import initialize_light_monitor
 from internlm.utils.common import get_master_node
 from internlm.utils.gputest import warmup_process_group
 from internlm.utils.logger import get_logger
@@ -643,16 +642,6 @@ def initialize_distributed_env(
 
     if args_check:
         args_sanity_check()
-
-    # init light monitor client
-    if gpc.config.get("monitor") and gpc.config.monitor.get("alert"):
-        alert_config = gpc.config.monitor.alert
-        if alert_config.enable_feishu_alert:
-            light_monitor_address = alert_config.light_monitor_address
-            if light_monitor_address:
-                initialize_light_monitor(light_monitor_address)
-            elif gpc.is_rank_for_log():
-                logger.warning("monitor address is none, monitor could not be used!")
 
 
 def get_config_value(config, key, defalut):

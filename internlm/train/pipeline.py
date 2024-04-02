@@ -53,7 +53,7 @@ from internlm.model.ops.linear import (
     ScaleColumnParallelLinear,
 )
 from internlm.model.utils import is_moe_param, try_import_RMSNorm
-from internlm.monitor import send_heartbeat, set_env_var
+from internlm.monitor import set_env_var
 from internlm.monitor.monitor import monitor_manager as mm
 from internlm.solver.optimizer import FSDPadaptOptimizer, HybridZeroOptimizer
 from internlm.solver.schedulers.beta2_scheduler import Beta2Scheduler
@@ -596,9 +596,6 @@ def record_current_batch_training_metrics(
                 writer.add_scalars(key=key, value=value, step=train_state.step_count)
             else:
                 writer.add_scalar(key=key, value=value, step=train_state.step_count)
-
-        if gpc.config.monitor.alert.get("light_monitor_address", None) and batch_count % 50 == 0:
-            send_heartbeat("train_metrics", infos)
 
         if update_panel:
             # metrics shown with dashboard panels
