@@ -414,8 +414,6 @@ class MHA(nn.Module):
             q = torch.cat([q[..., ::2], q[..., 1::2]], dim=-1)
             k = torch.cat([k[..., ::2], k[..., 1::2]], dim=-1)
 
-        assert "cu_seqlens" in kwargs, "cu_seqlens should not be None when using packed data"
-        cu_seqlens = kwargs["cu_seqlens"]
         indexes = kwargs.pop("indexes")
 
         q = self.rotary_emb._single_forward(q, indexes=indexes)
@@ -429,8 +427,8 @@ class MHA(nn.Module):
                 kv = kv.squeeze(0)
             # since torch_npu only supports fa with no packed data currently, qkv should be unpacked
             elif internlm_accelerator.get_accelerator_backend() in [AcceleratorType.NPU, AcceleratorType.DIPU]:
-                q = unpack_qkv_before_attn(q, cu_seqlens)
-                kv = unpack_qkv_before_attn(kv, cu_seqlens)
+                q = unpack_qkv_before_attn(q, kwargs["cu_seqlens"], kwargs["max_seqlen"])
+                kv = unpack_qkv_before_attn(kv, kwargs["cu_seqlens"], kwargs["max_seqlen"])
 
             if self.dtype is torch.float32:
                 if q.dtype not in [torch.float16, torch.bfloat16]:
@@ -469,7 +467,7 @@ class MHA(nn.Module):
             context = context.unsqueeze(0)  # restore bsz dimension
         elif internlm_accelerator.get_accelerator_backend() in [AcceleratorType.NPU, AcceleratorType.DIPU]:
             context = rearrange(context, "b s h d -> b s (h d)")  # recover the shape
-            context = pack_output_after_attn(context, cu_seqlens)
+            context = pack_output_after_attn(context, kwargs["cu_seqlens"])
 
         out = self.wo(context)
         return out
