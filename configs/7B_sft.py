@@ -1,8 +1,6 @@
 JOB_NAME = "7b_train"
 DO_ALERT = False
 
-model_type = "INTERNLM2_PUBLIC"
-
 SEQ_LEN = 2048
 HIDDEN_SIZE = 4096
 NUM_ATTENTION_HEAD = 32
@@ -59,7 +57,7 @@ data = dict(
     # defaults to 0, means disable evaluate
     valid_every=50,
     pack_sample_into_one=False,
-    total_steps=10,
+    total_steps=50000,
     skip_batches="",
     # rampup_batch_size (str): A string with three space-separated integers representing the
     #       starting batch size, the increment, and the number of steps between
@@ -73,8 +71,6 @@ data = dict(
     valid_folder=VALID_FOLDER,
     empty_cache_and_diag_interval=200,
     diag_outlier_ratio=1.1,
-    fixed_random_dataset_seqlen=False,
-    use_packed_dataset=True,
 )
 
 grad_scaler = dict(
@@ -178,7 +174,7 @@ weight parallel (dict):
 """
 parallel = dict(
     zero1=dict(size=-1),
-    tensor=dict(size=2, mode="mtp"),
+    tensor=dict(size=1, mode="mtp"),
     pipeline=dict(size=1, interleaved_overlap=True),
     weight=dict(size=1, overlap=True, memory_pool=True),
 )
