@@ -115,7 +115,7 @@ class CheckpointFunction(torch.autograd.Function):
         torch.set_rng_state(ctx.fwd_cpu_rng_state)
         for parallel_mode, state in ctx.fwd_seed_states.items():
             set_seed_states(parallel_mode, state)
-        set_mode(ctx.fwd_current_mode)
+        set_mode(ctx.fwd_current_mode, update_rng_current_mode=False)
         if ctx.activation_offload:
             tensors = copy_to_device(tensors, ctx.device)
 
@@ -136,7 +136,7 @@ class CheckpointFunction(torch.autograd.Function):
         torch.set_rng_state(bwd_cpu_rng_state)
         for parallel_mode, state in bwd_seed_states.items():
             set_seed_states(parallel_mode, state)
-        set_mode(bwd_current_mode)
+        set_mode(bwd_current_mode, update_rng_current_mode=False)
 
         # run backward() with only tensor that requires grad
         outputs_with_grad = []

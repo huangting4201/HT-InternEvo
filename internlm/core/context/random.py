@@ -38,9 +38,9 @@ class SeedManager:
         assert parallel_mode in self._seed_states, f"{parallel_mode} not found in seed manager"
         self._seed_states[parallel_mode] = state
 
-    def set_mode(self, parallel_mode: ParallelMode):
+    def set_mode(self, parallel_mode: ParallelMode, update_rng_current_mode: bool = True):
         """Sets the current mode of the seed manager."""
-        if self.current_mode:
+        if update_rng_current_mode and self.current_mode:
             # save state for current mode
             self._seed_states[self._current_mode] = internlm_accelerator.get_rng_state()
 
@@ -107,9 +107,9 @@ def add_seed(parallel_mode: ParallelMode, seed: int, overwrite: bool = False):
     _SEED_MANAGER.add_seed(parallel_mode, seed, overwrite)
 
 
-def set_mode(parallel_mode: ParallelMode):
+def set_mode(parallel_mode: ParallelMode, update_rng_current_mode: bool = True):
     """Sets the current mode of the seed manager."""
-    _SEED_MANAGER.set_mode(parallel_mode)
+    _SEED_MANAGER.set_mode(parallel_mode, update_rng_current_mode=update_rng_current_mode)
 
 
 def set_seed_states(parallel_mode: ParallelMode, state: Tensor):
