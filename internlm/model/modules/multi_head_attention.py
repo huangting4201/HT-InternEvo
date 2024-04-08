@@ -687,28 +687,25 @@ class MHA(nn.Module):
                                 "Notice your prompt's length is longer than model's max_position_embeddings: "
                                 f"{self.max_position_embeddings}, may cause deviations in dynamic ntk calculations."
                             )
-                        q = q.squeeze(1)
-                        k = k.squeeze(1)
                         q = self.rotary_emb._single_forward(
                             q,
                             inference_params.sequence_len_offset
                             * torch.ones(q.size(0), dtype=torch.int, device=q.device)
                             - empties,
-                        ).unsqueeze(1)
+                        )
                         k = self.rotary_emb._single_forward(
                             k,
                             inference_params.sequence_len_offset
                             * torch.ones(k.size(0), dtype=torch.int, device=k.device)
                             - empties,
-                        ).unsqueeze(1)
+                        )
                     else:
-                        q = q.squeeze(1)
                         q = self.rotary_emb._single_forward(
                             q,
                             inference_params.sequence_len_offset
                             * torch.ones(q.size(0), dtype=torch.int, device=q.device)
                             - empties,
-                        ).unsqueeze(1)
+                        )
                         moved_k = k.clone()
                         for i in range(len(empties)):
                             if empties[i] != 0:

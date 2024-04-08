@@ -234,18 +234,16 @@ class MHA(nn.Module):
                             q[i] = moved_q[i]
                             k[i] = moved_k[i]
                 else:
-                    q = q.squeeze(1)
-                    k = k.squeeze(1)
                     q = self.rotary_emb._single_forward(
                         q,
                         inference_params.sequence_len_offset * torch.ones(q.size(0), dtype=torch.int, device=q.device)
                         - empties,
-                    ).unsqueeze(1)
+                    )
                     k = self.rotary_emb._single_forward(
                         k,
                         inference_params.sequence_len_offset * torch.ones(k.size(0), dtype=torch.int, device=k.device)
                         - empties,
-                    ).unsqueeze(1)
+                    )
             else:
                 raise NotImplementedError(
                     "You should make sure you are aware that you are changing the method of generating."

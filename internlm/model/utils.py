@@ -261,11 +261,10 @@ class FusedDenseFunc(torch.autograd.Function):
         ctx.gather_dim = gather_dim
         ctx.dtype_eligible = dtype_eligible
 
-        if is_using_cuda_linear_bias_wgrad:
-            assert ctx.dtype_eligible, (
-                "CUDA flash attention only support dtype bfloat16/float16 or"
-                "float32 with torch.is_autocast_enabled is True."
-            )
+        if ctx.dtype_eligible is False:
+            global linear_bias_wgrad, is_using_cuda_linear_bias_wgrad
+            linear_bias_wgrad = linear_bias_wgrad_torch
+            is_using_cuda_linear_bias_wgrad = False
 
         if torch.is_autocast_enabled():
             x = x.to(dtype=torch.get_autocast_gpu_dtype())
@@ -382,11 +381,10 @@ class MegatronFusedDenseFunc(torch.autograd.Function):
         ctx.sequence_parallel = sequence_parallel
         ctx.dtype_eligible = dtype_eligible
 
-        if is_using_cuda_linear_bias_wgrad:
-            assert ctx.dtype_eligible, (
-                "CUDA flash attention only support dtype bfloat16/float16 or"
-                "float32 with torch.is_autocast_enabled is True."
-            )
+        if ctx.dtype_eligible is False:
+            global linear_bias_wgrad, is_using_cuda_linear_bias_wgrad
+            linear_bias_wgrad = linear_bias_wgrad_torch
+            is_using_cuda_linear_bias_wgrad = False
 
         if torch.is_autocast_enabled():
             x = x.to(dtype=torch.get_autocast_gpu_dtype())
@@ -487,11 +485,10 @@ class ISPFusedDenseFunc(torch.autograd.Function):
         ctx.communicator = communicator
         ctx.dtype_eligible = dtype_eligible
 
-        if is_using_cuda_linear_bias_wgrad:
-            assert ctx.dtype_eligible, (
-                "CUDA flash attention only support dtype bfloat16/float16 or"
-                "float32 with torch.is_autocast_enabled is True."
-            )
+        if ctx.dtype_eligible is False:
+            global linear_bias_wgrad, is_using_cuda_linear_bias_wgrad
+            linear_bias_wgrad = linear_bias_wgrad_torch
+            is_using_cuda_linear_bias_wgrad = False
 
         if torch.is_autocast_enabled():
             x = x.to(dtype=torch.get_autocast_gpu_dtype())
