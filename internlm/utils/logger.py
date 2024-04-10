@@ -65,6 +65,6 @@ def get_logger(
         filehandler.setFormatter(logging.Formatter(LOGGER_FORMAT))
         logger.addHandler(filehandler)
 
-        std_logger = logger
+    std_logger = logger
 
     return logger
