@@ -75,6 +75,7 @@ def train(
     # update ckpt config
     if model_type == "INTERNLM" and tp_mode != "isp" and interleaved is False:
         config.ckpt.load_ckpt_info = dict(path=INTERNLM1_CKPT_PATH, content=("model",), ckpt_type="internlm_test")
+        config.ckpt.auto_resume = False
 
     if enable_ckpt:
         config.ckpt.enable_save_ckpt = True

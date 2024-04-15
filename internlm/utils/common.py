@@ -248,8 +248,9 @@ def get_megatron_flops(
 def enable_pytorch_expandable_segments():
     if torch.__version__ >= "2.1.0" and AcceleratorType.GPU == internlm_accelerator.get_accelerator_backend():
         _alloc_setting = "expandable_segments:True"
-        if os.getenv("PYTORCH_CUDA_ALLOC_CONF", None) is not None:
-            _alloc_setting = os.getenv("PYTORCH_CUDA_ALLOC_CONF") + "," + _alloc_setting
+        assert (
+            os.getenv("PYTORCH_CUDA_ALLOC_CONF", None) is None
+        ), "PYTORCH_CUDA_ALLOC_CONF should not be set when using expandable_segments"
         internlm_accelerator.memory._set_allocator_settings(_alloc_setting)
     else:
         logger.warning("To support the 'expandable_segments' configuration, please upgrade torch to version 2.1.0.")
