@@ -832,13 +832,14 @@ class MHA(nn.Module):
         qkv = self.rotary_emb(qkv, **kwargs)
 
         kwargs.pop("indexes")
+        cu_seqlens = kwargs["cu_seqlens"]
 
         # for packed data, batch dimension with a size of 1 should be directly squeezed off.
         if internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
             qkv = qkv.squeeze(0)
         # since torch_npu only supports fa with no packed data currently, qkv should be unpacked
         elif internlm_accelerator.get_accelerator_backend() in [AcceleratorType.NPU, AcceleratorType.DIPU]:
-            qkv = unpack_qkv_before_attn(qkv, kwargs["cu_seqlens"])
+            qkv = unpack_qkv_before_attn(qkv, cu_seqlens)
             kwargs.pop("cu_seqlens")
             kwargs.pop("max_seqlen")
 
@@ -859,7 +860,7 @@ class MHA(nn.Module):
             context = context.unsqueeze(0)  # restore bsz dimension
         elif internlm_accelerator.get_accelerator_backend() in [AcceleratorType.NPU, AcceleratorType.DIPU]:
             context = rearrange(context, "b s h d -> b s (h d)")  # recover the shape
-            context = pack_output_after_attn(context, kwargs["cu_seqlens"])
+            context = pack_output_after_attn(context, cu_seqlens)
 
         out = self.out_proj(context)
 
