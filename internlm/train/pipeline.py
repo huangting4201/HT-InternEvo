@@ -361,6 +361,7 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
             gpc.config.parallel.weight.overlap,
             gpc.get_group(ParallelMode.WEIGHT),
             is_moe=False,
+            selective_ckpt_offload=gpc.config.get("selective_checkpoint_offload", False),
         )
         # register communicator for isp column parallel linear.
         ColumnParallelLinear.register_cls_communicator(isp_communicator)

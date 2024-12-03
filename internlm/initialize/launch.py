@@ -66,12 +66,21 @@ def get_default_parser():
 def args_sanity_check():
     assert gpc.config is not None, "config is not load!"
 
+    gpc.is_forward = True
+
     if "JOB_NAME" not in gpc.config:
         gpc.config._add_item("JOB_NAME", "AnonymousJob")
 
     # the default model type is INTERNLM
     if "model_type" not in gpc.config:
         gpc.config._add_item("model_type", ModelType.INTERNLM.name)
+
+    if gpc.config.model_type == "InternLM3_M":
+        # TODO: need check for isp overlap
+        num_layers = gpc.config.model.num_self_decoder_layers + gpc.config.model.num_cross_decoder_layers
+    else:
+        num_layers = gpc.config.model.num_layers
+    gpc.config.isp_num_layers = num_layers
 
     if "use_apex_adam" not in gpc.config:
         gpc.config._add_item("use_apex_adam", False)
@@ -395,17 +404,18 @@ def args_sanity_check():
         gpc.config.parallel["tensor"] = dict(size=gpc.config.parallel["tensor"], mode=TensorParallelMode.mtp.name)
     if gpc.config.parallel["tensor"].get("mode", None) is None:
         gpc.config.parallel["tensor"]["mode"] = TensorParallelMode.mtp.name
-    assert (
-        gpc.config.VOCAB_SIZE % gpc.config.parallel.tensor.size == 0
-    ), "VOCAB_SIZE must be integer multiple of tensor parallel size"
     if gpc.config.parallel["tensor"]["mode"] == TensorParallelMode.isp.name:
         assert not gpc.config.parallel.zero1.fsdp, "FSDP does not support isp"
         assert (
             torch.__version__ >= "2.1.0"
         ), f"requires torch>=2.1.0 when using isp but current version is {torch.__version__}"
-        assert (
-            gpc.config.VOCAB_SIZE % gpc.config.parallel.weight.size == 0
-        ), "VOCAB_SIZE must be integer multiple of wp size"
+
+    assert (
+        gpc.config.model.vocab_size % gpc.config.parallel.weight.size == 0
+    ), "model.vocab_size must be integer multiple of weight parallel size"
+    assert (
+        gpc.config.model.vocab_size % gpc.config.parallel.tensor.size == 0
+    ), "model.vocab_size must be integer multiple of tensor parallel size"
 
     assert gpc.config.parallel["tensor"].get("mode", None) in [
         TensorParallelMode.mtp.name,
@@ -529,6 +539,12 @@ def args_sanity_check():
 
     if "selective_checkpoint" not in gpc.config:
         gpc.config._add_item("selective_checkpoint", False)
+    if "selective_checkpoint_offload" not in gpc.config:
+        gpc.config.selective_checkpoint_offload = False
+    if gpc.config.selective_checkpoint_offload is True:
+        assert (
+            gpc.config.selective_checkpoint is True
+        ), "When using selective_checkpoint_offload, selective_checkpoint must be True"
 
     # moe not support overlap and zero1.5 for now
     if gpc.config.model.get("num_experts", 1) > 1:
