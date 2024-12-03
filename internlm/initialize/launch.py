@@ -94,13 +94,17 @@ def args_sanity_check():
         gpc.config.parallel._add_item("tensor", dict(size=1, mode=TensorParallelMode.mtp.name))
 
     if "weight" not in gpc.config.parallel:
-        gpc.config.parallel._add_item("weight", dict(size=1, overlap=False))
+        gpc.config.parallel._add_item(
+            "weight", dict(size=1, overlap=False, launch_allgather_before="wo", forward_overlap_per="layer")
+        )
 
     if "expert" not in gpc.config.parallel:
         gpc.config.parallel._add_item("expert", dict(size=-1, no_tp=False))
 
     if "expert_weight" not in gpc.config.parallel:
-        gpc.config.parallel._add_item("expert_weight", dict(size=1, overlap=False))
+        gpc.config.parallel._add_item(
+            "expert_weight", dict(size=1, overlap=False, launch_allgather_before="wo", forward_overlap_per="layer")
+        )
 
     if isinstance(gpc.config.parallel.pipeline, int):
         pp = gpc.config.parallel.pipeline

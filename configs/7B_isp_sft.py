@@ -31,7 +31,7 @@ ckpt = dict(
     # 'load_ckpt_info' setting guide:
     # 1. the 'path' indicate ckpt path,
     # 2. the 'content‘ means what states will be loaded, support: "model", "sampler", "optimizer", "scheduler", "all"
-    # 3. the ’ckpt_type‘ means the type of checkpoint to be loaded, support: "internevo", "hf", or other custom-defined 
+    # 3. the ’ckpt_type‘ means the type of checkpoint to be loaded, support: "internevo", "hf", or other custom-defined
     # load function such as "llama"
     load_ckpt_info=dict(path=MODEL_ONLY_FOLDER, content=("model",), ckpt_type="internevo"),
     # 'auto_resume' is designed to automatically load the latest checkpoint from 'save_ckpt_folder' when encountering
@@ -186,6 +186,10 @@ pipeline parallel (dict):
 weight parallel (dict):
     1. size: int, the size of weight parallel.
     2. overlap: bool, enable/disable all_gather/reduce_scatter communication overlap, defaults to False.
+    3. launch_allgather_before: str, before which module to launch the all gather communication to
+        prefetch next layer's weight, should be in ['wqkv', 'attn', 'wo', 'w1'], defaults to 'wo'.
+        Must be used with forward_overlap_per 'layer'.
+    4. forward_overlap_per: str, all gather prefetch granularity, per 'module' or per 'layer', defaults to 'layer'.
 sequence_2D (dict):
     1. enable: bool, whether enable the 2D sequence parallel or not.
     2. head_size: int, the parallel degree of head parallelism (DeepSpeed Ulysses). 
@@ -205,7 +209,7 @@ parallel = dict(
     zero1=dict(size=-1),
     tensor=dict(size=2, mode="isp"),
     pipeline=dict(size=1, interleaved_overlap=True),
-    weight=dict(size=4, overlap=True),
+    weight=dict(size=4, overlap=True, launch_allgather_before="wo", forward_overlap_per="layer"),
     sequence_2D=dict(
         enable=False,
         head_size=2,
