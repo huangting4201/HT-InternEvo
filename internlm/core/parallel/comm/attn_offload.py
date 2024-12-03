@@ -1,6 +1,5 @@
 import torch
 
-from internlm.core.context import global_context as gpc
 from internlm.utils.common import get_current_device
 
 global_attn_offload = None
