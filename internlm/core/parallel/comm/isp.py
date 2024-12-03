@@ -438,6 +438,7 @@ class ISPCommunicator(WPCommunicator):
         self._overlap_states[cid].num_blocks = len(self._overlap_states[cid].index_to_isp_modules)
 
     def _all_gather_module_weight(self, module):
+        assert module not in self._bias_global_output and module not in self._weight_global_output
         with_bias = module.bias is not None
 
         # submit the all-gather communication for weight and bias.
@@ -504,7 +505,7 @@ class ISPCommunicator(WPCommunicator):
             self._all_gather_block_weight(0)
 
     def _pre_forward_hook_for_last_ckpt_block(self, *args):  # pylint: disable=W0613
-        if self.is_forward is False:
+        if self._forward_overlap_per == "layer" and self.is_forward is False:
             self._all_gather_block_weight(self._ckpt_block_num - 1)
 
     def _pre_forward_hook_for_out_proj(self, module: nn.Module, *args):  # pylint: disable=W0613
@@ -520,6 +521,9 @@ class ISPCommunicator(WPCommunicator):
                     self._all_gather_block_weight(block_index + 1)
 
     def _pre_forward_hook_for_module(self, module: nn.Module, *args):  # pylint: disable=W0613
+        if self._forward_overlap_per == "layer":
+            assert module in self._weight_global_handle
+
         if module not in self._weight_global_handle:
             self._all_gather_module_weight(module)
 
