@@ -285,7 +285,7 @@ class ISPOverlapState:
     def __init__(self) -> None:
         self.num_blocks: int = 0
         self.ckpt_block_num: int = 0
-        self.isp_outs: List[nn.Module] = []
+        self.isp_prefetch_launch_module: List[nn.Module] = []
         self.isp_modules: List[nn.Module] = []
         self.index_to_isp_modules: Dict[int, nn.Module] = {}
         self.index_to_block: Dict[int, nn.Module] = {}
@@ -326,7 +326,7 @@ class ISPCommunicator(WPCommunicator):
         # inner interface variables of overlap state.
         self._num_blocks = None
         self._ckpt_block_num = None
-        self._isp_outs = None
+        self._isp_prefetch_launch_module = None
         self._isp_modules = None
         # key: isp module; value: module global all-gather op handle
         self._weight_global_handle = None
@@ -405,7 +405,7 @@ class ISPCommunicator(WPCommunicator):
                     self._overlap_states[cid].index_to_block[idx] = block
                     for name, child in block.named_modules():
                         if is_allgather_launch_module(name, child):
-                            self._overlap_states[cid].isp_outs.append(child)
+                            self._overlap_states[cid].isp_prefetch_launch_module.append(child)
                             self._overlap_states[cid].module_to_index[child] = idx
                         if isinstance(child, (ParallelLinearWithCommExt)):
                             if is_moe_param(child.weight) != self.is_moe:
@@ -508,7 +508,7 @@ class ISPCommunicator(WPCommunicator):
         if self._forward_overlap_per == "layer" and self.is_forward is False:
             self._all_gather_block_weight(self._ckpt_block_num - 1)
 
-    def _pre_forward_hook_for_out_proj(self, module: nn.Module, *args):  # pylint: disable=W0613
+    def _pre_forward_hook_for_prefetch_launch_module(self, module: nn.Module, *args):  # pylint: disable=W0613
         block_index = self._module_to_index[module]
 
         if self._forward_overlap_per == "layer":
@@ -596,8 +596,8 @@ class ISPCommunicator(WPCommunicator):
                 self._pre_forward_hook_for_last_ckpt_block
             )
 
-        for out_proj in self._isp_outs:
-            out_proj.register_forward_pre_hook(self._pre_forward_hook_for_out_proj)
+        for module in self._isp_prefetch_launch_module:
+            module.register_forward_pre_hook(self._pre_forward_hook_for_prefetch_launch_module)
 
         for module in self._isp_modules:
             module.register_forward_pre_hook(self._pre_forward_hook_for_module)
@@ -624,7 +624,7 @@ class ISPCommunicator(WPCommunicator):
         return "wp"
 
     def switch_current_model_chunk(self, chunk_id: int) -> None:
-        self._isp_outs = self._overlap_states[chunk_id].isp_outs
+        self._isp_prefetch_launch_module = self._overlap_states[chunk_id].isp_prefetch_launch_module
         self._isp_modules = self._overlap_states[chunk_id].isp_modules
         self._weight_global_handle = self._overlap_states[chunk_id].weight_global_handle
         self._bias_global_handle = self._overlap_states[chunk_id].bias_global_handle
