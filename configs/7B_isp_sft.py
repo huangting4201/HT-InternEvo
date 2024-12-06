@@ -1,5 +1,5 @@
 JOB_NAME = "7b_train"
-# model_type = "INTERNLM2_PUBLIC"
+model_type = "INTERNLM2_PUBLIC"
 DO_ALERT = False
 
 VOCAB_SIZE = 103168
@@ -145,7 +145,7 @@ model = dict(
     parallel_output=True,
     hidden_size=HIDDEN_SIZE,
     num_layers=NUM_LAYER,
-    # no_bias=True,
+    no_bias=True,
     mlp_ratio=MLP_RATIO,
     apply_post_layer_norm=False,
     dtype="torch.bfloat16",  # Support: "torch.float16", "torch.half", "torch.bfloat16", "torch.float32", "torch.tf32"
@@ -192,17 +192,17 @@ weight parallel (dict):
     4. forward_overlap_per: str, all gather prefetch granularity, per 'module' or per 'layer', defaults to 'layer'.
 sequence_2D (dict):
     1. enable: bool, whether enable the 2D sequence parallel or not.
-    2. head_size: int, the parallel degree of head parallelism (DeepSpeed Ulysses). 
+    2. head_size: int, the parallel degree of head parallelism (DeepSpeed Ulysses).
                   head_size * context_size should be equal tensor size.
     3. context_size: int, the parallel degree of context parallelism.
                   head_size * context_size should be equal tensor size.
     4. window_size: int, the sliding window size in context parallelism.
     5. device_placement_strategy: dict,
-        head_first: bool, if `True`, ranks of the same head parallel group are 
+        head_first: bool, if `True`, ranks of the same head parallel group are
                               given high priority for colocation on the same node;
                               if `False`, ranks of the same context parallel group are
                               given high priority for colocation on the same node;
-        interleaved: bool, if `head_first` is `False` and `window_size` > 1, this config could 
+        interleaved: bool, if `head_first` is `False` and `window_size` > 1, this config could
                            interleaved the ranks in the same window to make full use of NIC as much as possible.
 """
 parallel = dict(
