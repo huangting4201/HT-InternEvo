@@ -266,7 +266,6 @@ class ISPCommModelConfig:
         dtype: torch.dtype = torch.half,
         device: torch.device = None,
         activation_checkpointing: float = 0.0,
-        module_shapes: Dict[str, torch.Size] = None,
     ) -> None:
         self.dtype = dtype
         if device is None:
@@ -274,7 +273,6 @@ class ISPCommModelConfig:
         else:
             self.device = device
         self.activation_checkpointing = activation_checkpointing
-        self.module_shapes = module_shapes
 
 
 class ISPOverlapState:
@@ -315,7 +313,6 @@ class ISPCommunicator(WPCommunicator):
         self.is_moe = is_moe
         self.is_forward = True
         self.reduce_scatter_handlers = {}
-        self._module_shapes = {}
         self._forward_prefetch_prerequisites = []
         self._forward_overlap_per = self._get_forward_overlap_granularity()
         self._launch_before_module = self._get_launch_before_module()
@@ -353,7 +350,6 @@ class ISPCommunicator(WPCommunicator):
                 self._register_sync_parameters_hook()
             # switch to chunk 0 at first.
             self.switch_current_model_chunk(0)
-            self.model_conf.module_shapes = self._module_shapes
 
     def _get_launch_before_module(self):
         if self.is_moe is True:
@@ -406,16 +402,10 @@ class ISPCommunicator(WPCommunicator):
                     for name, child in block.named_modules():
                         if is_allgather_launch_module(name, child):
                             self._overlap_states[cid].isp_prefetch_launch_module.append(child)
-                            self._overlap_states[cid].module_to_index[child] = idx
                         if isinstance(child, (ParallelLinearWithCommExt)):
                             if is_moe_param(child.weight) != self.is_moe:
                                 continue
-                            if name not in self._module_shapes:
-                                weight_parallel_size = dist.get_world_size(self.process_group)
-                                origin_shape = tuple(
-                                    [child.weight.shape[0] * weight_parallel_size] + list(child.weight.shape[1:])
-                                )
-                                self._module_shapes[name] = torch.Size(origin_shape)
+
                             self._overlap_states[cid].module_to_index[child] = idx
                             self._overlap_states[cid].isp_modules.append(child)
                             self._overlap_states[cid].index_to_isp_modules[idx].append(child)
@@ -504,10 +494,6 @@ class ISPCommunicator(WPCommunicator):
         if self._forward_overlap_per == "layer" and self.is_forward is True:
             self._all_gather_block_weight(0)
 
-    def _pre_forward_hook_for_last_ckpt_block(self, *args):  # pylint: disable=W0613
-        if self._forward_overlap_per == "layer" and self.is_forward is False:
-            self._all_gather_block_weight(self._ckpt_block_num - 1)
-
     def _pre_forward_hook_for_prefetch_launch_module(self, module: nn.Module, *args):  # pylint: disable=W0613
         block_index = self._module_to_index[module]
 
@@ -521,9 +507,6 @@ class ISPCommunicator(WPCommunicator):
                     self._all_gather_block_weight(block_index + 1)
 
     def _pre_forward_hook_for_module(self, module: nn.Module, *args):  # pylint: disable=W0613
-        if self._forward_overlap_per == "layer":
-            assert module in self._weight_global_handle
-
         if module not in self._weight_global_handle:
             self._all_gather_module_weight(module)
 
@@ -583,18 +566,13 @@ class ISPCommunicator(WPCommunicator):
         register forward hooks and backward hooks for isp modules.
         """
         # register forward hooks
-        # 1. register pre_forward_hook @block_0 to prefetch for block 0
-        # 2. register pre_forward_hook @block_(ckpt_block_num-1) to prefetch for the last ckpt block
-        # 3. register pre_forward_hook @out_proj module to prefetch for next block,
-        #    notice that next block's all_gather op should be after current block's all_to_all op
-        # 4. register pre_forward_hook @isp_module to wait handle for current module
-        # 5. register post_forward_hook @isp_module to release resource
+        # 1. register pre_forward_hook @block_0 to prefetch weight for block 0.
+        # 2. register pre_forward_hook @prefetch_launch_module to prefetch weight for next block,
+        #    when forward overlap granularity is 'layer'.
+        # 3. register pre_forward_hook @isp_module to wait handle for current module,
+        #    and prefetch weight for next module when forward overlap granularity is 'module'.
+        # 4. register post_forward_hook @isp_module to release memory resource.
         self._index_to_block[0].register_forward_pre_hook(self._pre_forward_hook_for_first_block)
-
-        if self._ckpt_block_num >= 1:
-            self._index_to_block[self._ckpt_block_num - 1].register_forward_pre_hook(
-                self._pre_forward_hook_for_last_ckpt_block
-            )
 
         for module in self._isp_prefetch_launch_module:
             module.register_forward_pre_hook(self._pre_forward_hook_for_prefetch_launch_module)
@@ -604,8 +582,8 @@ class ISPCommunicator(WPCommunicator):
             module.register_forward_hook(self._post_forward_hook_for_module)
 
         # register backward hooks
-        # 1. register pre_backward_hook @isp_module to wait handle for current module and to prefetch for next module
-        # 2. register post_backward_hook @isp_module to release resource
+        # 1. register pre_backward_hook @isp_module to wait handle for current module and to prefetch for next module.
+        # 2. register post_backward_hook @isp_module to release memory resource.
         if self._ckpt_block_num < self._num_blocks:
             for module in self._isp_modules:
                 module.register_full_backward_pre_hook(self._pre_backward_hook_for_module)
