@@ -508,8 +508,7 @@ class ISPCommunicator(WPCommunicator):
             if (
                 self.is_forward is False
                 and gpc.config.selective_checkpoint
-                and (block_index - 1) >= 0
-                and (block_index - 1) < self._ckpt_block_num
+                and (0 <= (block_index - 1) < self._ckpt_block_num)
             ):
                 get_offload_manager().preload_fa_output_with_layer(layer_idx=block_index - 1)
 

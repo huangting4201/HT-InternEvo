@@ -538,9 +538,13 @@ def args_sanity_check():
         gpc.config.loss._add_item("moe_loss_coeff", 1.0)
 
     if "selective_checkpoint" not in gpc.config:
-        gpc.config._add_item("selective_checkpoint", False)
+        gpc.config.selective_checkpoint = False
     if "selective_checkpoint_offload" not in gpc.config:
         gpc.config.selective_checkpoint_offload = False
+    if gpc.config.selective_checkpoint is True:
+        assert (
+            gpc.config.parallel["tensor"]["mode"] == "isp"
+        ), "When using selective_checkpoint, tensor parallel mode must be isp"
     if gpc.config.selective_checkpoint_offload is True:
         assert (
             gpc.config.selective_checkpoint is True

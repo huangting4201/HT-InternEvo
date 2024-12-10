@@ -61,26 +61,16 @@ class AttnOffloadManager:
             tensor_buf.copy_(tensor)
             tensors.append(tensor_buf)
         self.fa_output_mapping[layer_idx] = tensors
-        torch.cuda.current_stream(get_current_device()).synchronize()
 
     def get_fa_output_with_layer(self, layer_idx):
         assert layer_idx in self.fa_output_mapping
-        if self.cpu_offload is False:
-            return self.fa_output_mapping.pop(layer_idx)
-
-        # if layer_idx < gpc.config.isp_num_layers - 1:
-        #     self.fa_stream.wait_event(self.h2d_final_event)
-
-        torch.cuda.current_stream(get_current_device()).synchronize()
-        self.fa_stream.synchronize()
         return self.fa_output_mapping.pop(layer_idx)
 
     def offload_fa_output_with_layer(self, layer_idx):
         assert layer_idx in self.fa_output_mapping
-        # if layer_idx > 0:
-        #     self.fa_stream.wait_event(self.d2h_final_event)
 
-        self.fa_stream.synchronize()
+        self.fa_stream.wait_stream(torch.cuda.current_stream())
+        self.fa_stream.wait_event(self.d2h_final_event)
 
         with torch.cuda.stream(self.fa_stream):
             _gpu_tensors = self.fa_output_mapping.pop(layer_idx)
@@ -104,11 +94,13 @@ class AttnOffloadManager:
 
             self.fa_output_mapping[layer_idx] = _cpu_tensors
 
-        # self.fa_stream.record_event(self.d2h_final_event)
+        self.fa_stream.record_event(self.d2h_final_event)
 
     def preload_fa_output_with_layer(self, layer_idx):
         assert layer_idx in self.fa_output_mapping
-        self.fa_stream.synchronize()
+
+        self.fa_stream.wait_stream(torch.cuda.current_stream())
+        self.fa_stream.wait_event(self.h2d_final_event)
 
         # Important: get device before with stream, in stream get device is error
         _device = get_current_device()
@@ -119,7 +111,7 @@ class AttnOffloadManager:
                 for _tensor in _cpu_tensors
             ]
 
-        # self.fa_stream.record_event(self.h2d_final_event)
+        self.fa_stream.record_event(self.h2d_final_event)
 
 
 def initialize_offload_manager(enable_cpu_offload: bool = False):

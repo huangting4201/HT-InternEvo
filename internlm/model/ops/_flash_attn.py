@@ -155,8 +155,11 @@ class FlashAttnVarlenKVPackedFunc_V221(torch.autograd.Function):
     ):
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
+
         k, v = kv[:, 0], kv[:, 1]
+
         _ckpt_block_num = int(gpc.config.model.checkpoint * gpc.config.isp_num_layers)
+
         if gpc.is_forward is False and gpc.config.selective_checkpoint and layer_idx < _ckpt_block_num:
             out, out_padded, softmax_lse, S_dmask, rng_state = get_offload_manager().get_fa_output_with_layer(layer_idx)
         else:
