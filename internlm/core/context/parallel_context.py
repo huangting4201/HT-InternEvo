@@ -662,19 +662,6 @@ class ParallelContext(metaclass=SingletonMeta):
         group_configs = generate_parallel_group_configs(parallel_strategy, parallel_sizes, enable_moe)
         group_results = create_parallel_process_groups(world_size, rank, group_configs, with_cpu_group=False)
 
-        # process group for extra gqa tensor parallel.
-        if (
-            "num_kv_attention_heads" in self.config.model
-            and self.config.model.num_kv_attention_heads < self.tensor_parallel_size
-        ):
-            group_results.append(
-                create_single_process_group(
-                    world_size,
-                    rank,
-                    GroupConfig(ParallelMode.GQA, self.tensor_parallel_size // self.num_kv_attention_heads),
-                )
-            )
-
         # process group for network test.
         group_results.append(
             create_single_process_group(
