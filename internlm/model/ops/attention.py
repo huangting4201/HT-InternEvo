@@ -891,6 +891,8 @@ class SelfAttention(nn.Module):
         attention_dropout (float): Dropout rate for attention scores. Defaults to 0.0.
     """
 
+    is_attn_cls = True
+
     def __init__(self, causal=False, softmax_scale=None, attention_dropout=0.0, layer_idx=0):
         super().__init__()
         self.causal = causal

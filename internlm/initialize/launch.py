@@ -103,13 +103,17 @@ def args_sanity_check():
         gpc.config.parallel._add_item("tensor", dict(size=1, mode=TensorParallelMode.mtp.name))
 
     if "weight" not in gpc.config.parallel:
-        gpc.config.parallel._add_item("weight", dict(size=1, overlap=False))
+        gpc.config.parallel._add_item(
+            "weight", dict(size=1, overlap=False, launch_allgather_before="wo", forward_overlap_per="layer")
+        )
 
     if "expert" not in gpc.config.parallel:
         gpc.config.parallel._add_item("expert", dict(size=-1, no_tp=False))
 
     if "expert_weight" not in gpc.config.parallel:
-        gpc.config.parallel._add_item("expert_weight", dict(size=1, overlap=False))
+        gpc.config.parallel._add_item(
+            "expert_weight", dict(size=1, overlap=False, launch_allgather_before="wo", forward_overlap_per="layer")
+        )
 
     if isinstance(gpc.config.parallel.pipeline, int):
         pp = gpc.config.parallel.pipeline
@@ -549,6 +553,9 @@ def args_sanity_check():
         assert (
             gpc.config.selective_checkpoint is True
         ), "When using selective_checkpoint_offload, selective_checkpoint must be True"
+        assert (
+            gpc.config.parallel.weight.launch_allgather_before == "wo"
+        ), "When using selective_checkpoint_offload, wp launch allgather communication should be set before 'wo' module"
 
     # moe not support overlap and zero1.5 for now
     if gpc.config.model.get("num_experts", 1) > 1:

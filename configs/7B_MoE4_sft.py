@@ -183,6 +183,10 @@ pipeline parallel (dict):
 weight parallel (dict):
     1. size: int, the size of weight parallel.
     2. overlap: bool, enable/disable all_gather/reduce_scatter communication overlap, defaults to False.
+    3. launch_allgather_before: str, before which module to launch the all gather communication to
+        prefetch next layer's weight, should be in ['wqkv', 'attn', 'wo', 'w1'], defaults to 'wo'.
+        Must be used with forward_overlap_per 'layer'.
+    4. forward_overlap_per: str, all gather prefetch granularity, per 'module' or per 'layer', defaults to 'layer'.
 expert parallel (dict):
     1. size: int
         * if size <= 0, ep size equals to dp size, but if the number of experts is smaller than dp size, set ep size
@@ -193,14 +197,18 @@ expert parallel (dict):
 expert weight parallel (dict):
     1. size: int, the size of weight parallel for expert module, distinct with global weight parallel size.
     2. overlap: bool, enable/disable all_gather/reduce_scatter communication overlap, defaults to False.
+    3. launch_allgather_before: str, before which module to launch the all gather communication to
+        prefetch next layer's weight, should be in ['wqkv', 'attn', 'wo', 'w1'], defaults to 'wo'.
+        Must be used with forward_overlap_per 'layer'.
+    4. forward_overlap_per: str, all gather prefetch granularity, per 'module' or per 'layer', defaults to 'layer'.
 """
 parallel = dict(
     zero1=dict(size=-1, fsdp=False),
     tensor=dict(size=1, mode="mtp"),
     pipeline=dict(size=1, interleaved_overlap=True),
-    weight=dict(size=1, overlap=True),
+    weight=dict(size=1, overlap=True, launch_allgather_before="wo", forward_overlap_per="layer"),
     expert=dict(size=-1, no_tp=False),
-    expert_weight=dict(size=1, overlap=True),
+    expert_weight=dict(size=1, overlap=True, launch_allgather_before="wo", forward_overlap_per="layer"),
 )
 
 cudnn_deterministic = False
